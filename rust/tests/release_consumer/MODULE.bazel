@@ -1,0 +1,23 @@
+module(name = "cargo_release_consumer")
+
+bazel_dep(name = "sonic-build-infra", version = "0.0.36-3070359b148ad6ad4eab749f5143ff2a38c980df", repo_name = "sonic_build_infra")
+bazel_dep(name = "sonic-rust-deps", version = "0.0.4-6d9c70f708d7420e9e2b2cdc906b80cee6b140f1", repo_name = "sonic_rust_deps")
+bazel_dep(name = "rules_rs", version = "0.1.0")
+bazel_dep(name = "rules_python", version = "1.8.0")
+
+# An unchanged real consumer, fetched directly instead of vendoring its source.
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+http_file(
+    name = "gnmi_watchdog_source",
+    urls = ["https://raw.githubusercontent.com/securely1g/sonic-buildimage/d3a83008942650d6900809c2cc6bad6b5e82091f/dockers/docker-gnmi-watchdog/watchdog/src/main.rs"],
+    sha256 = "fc2fea48e071153d2c2b7b7db6a9bc9e34dafd752035e02b706efe67e6a17ab9",
+    downloaded_file_path = "gnmi_watchdog.rs",
+)
+
+# rules_rs's re-exported extension requires the root to declare its SDK.
+rust_rules = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust")
+use_repo(rust_rules, "rules_rust")
+rust = use_extension("@rules_rs//rs:rules_rust_reexported_extensions.bzl", "rust")
+rust.toolchain(edition = "2021", versions = ["1.90.0"], extra_target_triples = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"])
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")

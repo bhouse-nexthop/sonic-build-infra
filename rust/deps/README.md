@@ -17,7 +17,7 @@ when those consumers are themselves dependencies of an image build.
 `Cargo.toml` contains the union of third-party dependencies and requested
 features from Common, SWSS and the Rust supervisor listener, including their tests and Cargo build helpers.
 `Cargo.lock` preserves their existing package versions and checksums; the
-324 crates.io packages keep their pins. SONiC source packages remain in their
+existing crates.io packages keep their pins. SONiC source packages remain in their
 owning modules instead of this lock.
 
 The graph uses `rules_rs` 0.1.0 and provides a pinned Rust 1.90.0 toolchain for
@@ -149,3 +149,24 @@ OpenTelemetry 0.25.0 requires Tokio ~1.38.0, so this migration retains Tokio
 1.38.2 and deliberately selects DASH HA's original tokio-util 0.7.14.
 The cancellation/task-tracking regression exercises HA's actual required APIs.
 No OpenTelemetry dependency upgrade is included.
+
+## VS host dependency additions
+
+Public daemonize, pnet, procfs, psutil, sysinfo and syslog targets preserve
+the original VS host components' Cargo-lock versions. The regex target exposes
+1.12.2 already present in the shared lock, compatible with the host workspace
+request `regex = "1.10"`. Every previously locked
+package identity and checksum remains unchanged. Dependency names acquire version
+qualifiers where the added graph requires two versions; that disambiguation is
+not an upgrade of the existing package.
+
+The parent module's `//rust:release.bzl` exports `cargo_release_binary`. Unlike
+per-crate `rustc_flags`, its transition selects Cargo's original default release
+optimization across the target dependency graph: opt-level 3, Cargo lto=false (thin-local LTO) and 16
+codegen units. Other targets and their test profiles retain caller settings.
+The wrapper forwards the resulting binary and runfiles for normal installation.
+
+The independent `rust/tests/release_consumer` module uses a fixed, unchanged
+gNMI watchdog source and a minimal native dependency fixture. CI binds both
+infra and this shared-crate module to the checkout being tested with explicit
+`--override_module` arguments; those CLI overrides do not enter a consumer release.

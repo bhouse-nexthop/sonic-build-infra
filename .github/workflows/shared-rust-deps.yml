@@ -93,6 +93,20 @@ jobs:
           cp bazel-testlogs/tests/panic_runtime_test/test.xml ci-artifacts/panic-release-test.xml
           test ! -e Cargo.Bazel.lock
           git diff --exit-code -- Cargo.lock
+      - name: Verify Cargo release consumers and matching symbols
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          artifacts="$root/rust/deps/ci-artifacts"
+          cd rust/tests/release_consumer
+          overrides=(--override_module=sonic-build-infra="$root" --override_module=sonic-rust-deps="$root/rust/deps")
+          platform=()
+          if [[ "$EXPECTED_DEBIAN_ARCH" == arm64 ]]; then platform=(--config=aarch64); fi
+          bazel run "${overrides[@]}" "${platform[@]}" @sonic_build_infra//rust:cargo -- metadata --locked --format-version=1 --manifest-path "$root/rust/deps/Cargo.toml" > "$artifacts/cargo-release-metadata.json"
+          bazel build "${overrides[@]}" "${platform[@]}" --jobs=2 //:new_crate_exports
+          bazel test "${overrides[@]}" "${platform[@]}" --jobs=2 --test_output=errors //:runtime_debug_test 2>&1 | tee "$artifacts/cargo-release-tests.log"
+          bazel aquery "${overrides[@]}" "${platform[@]}" -c fastbuild --@rules_rust//rust/settings:lto=fat --@rules_rust//rust/settings:codegen_units=1 --output=jsonproto 'deps(set(//:probe.release //:probe.unprofiled))' > "$artifacts/cargo-release-actions.json"
+          python3 profile_contract.py "$artifacts/cargo-release-actions.json" > "$artifacts/cargo-release-profile.json"
       - name: Collect shared dependency evidence
         if: always()
         run: |
