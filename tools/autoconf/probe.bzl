@@ -40,15 +40,29 @@ def _impl(ctx):
     seen_search_flags = {}
     for item in linker_inputs:
         additional_inputs.extend(item.additional_inputs)
-        for flag in item.user_link_flags:
-            search_flag = (flag.startswith("-L") and flag != "-L") or any([flag.startswith(prefix) for prefix in ["-Wl,-rpath=", "-Wl,-rpath,", "-Wl,-rpath-link=", "-Wl,-rpath-link,"]])
+        flags = item.user_link_flags
+        skip_operand = False
+        for index in range(len(flags)):
+            if skip_operand:
+                skip_operand = False
+                continue
+            flag = flags[index]
+            words = [flag]
+            if flag == "-Xlinker":
+                if index + 1 == len(flags):
+                    fail("-Xlinker has no operand in declared CcInfo")
+                words.append(flags[index + 1])
+                skip_operand = True
+            operand = words[-1]
+            search_flag = (operand.startswith("-L") and operand != "-L") or any([operand.startswith(prefix) for prefix in ["-Wl,-rpath=", "-Wl,-rpath,", "-Wl,-rpath-link=", "-Wl,-rpath-link,", "-rpath=", "-rpath-link="]])
+            key = (words[0], words[1] if len(words) == 2 else None)
             if search_flag:
-                if flag not in seen_search_flags:
-                    operands.append(flag)
-                    seen_search_flags[flag] = True
+                if key not in seen_search_flags:
+                    operands.extend(words)
+                    seen_search_flags[key] = True
             else:
-                # Unknown/stateful linker options delimit an ordered segment.
-                operands.append(flag)
+                # Preserve driver forwarding and its operand as one unit.
+                operands.extend(words)
                 seen_dynamic = {}
         for library in item.libraries:
             file = library.static_library or library.pic_static_library or library.interface_library or library.dynamic_library
