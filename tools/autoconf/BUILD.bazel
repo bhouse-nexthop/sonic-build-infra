@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(":probe.bzl", "autoconf_probe")
 load(":probe_analysis_test.bzl", "native_fixture")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
@@ -11,8 +12,14 @@ py_binary(
 
 exports_files(["probe.bzl"])
 
+# Two source owners can forward the same GNU ld search directory. The probe
+# must preserve each -Xlinker/operand pair when compacting repeated flags.
+cc_library(name = "launcher_search_a", linkopts = ["-Xlinker", "-L."])
+cc_library(name = "launcher_search_b", linkopts = ["-Xlinker", "-L."])
+
 autoconf_probe(
     name = "launcher_fixture",
+    deps = [":launcher_search_a", ":launcher_search_b"],
     configure = "testdata/configure",
     srcs = ["probe_runner.py"] + glob(["testdata/**"]),
     # Repeated declared include flags preserve semantics while exercising the
