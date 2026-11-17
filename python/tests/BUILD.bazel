@@ -5,6 +5,7 @@ load("@sonic_wheel_pip//:requirements.bzl", "requirement")
 load("//python:site_packages.bzl", "site_packages")
 load("//python:source_package.bzl", "python_runtime_packages")
 load(":site_packages_contract.bzl", "demo_targets")
+load(":inherited_runtime_fixture.bzl", "inherited_runtime_fixture")
 
 package(default_testonly = True)
 
@@ -121,3 +122,5 @@ py_library(
     visibility = ["//visibility:public"],
     deps = ["//python:runtime_lock_lib"],
 )
+
+inherited_runtime_fixture()

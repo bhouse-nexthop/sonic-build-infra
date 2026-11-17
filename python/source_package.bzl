@@ -44,6 +44,7 @@ def _install_impl(ctx):
         "project_urls",
         "description_content_type",
         "regular_file_mode",
+        "executable_files",
     ]}
     extra_distinfo_files = []
     for target, dest in ctx.attr.extra_distinfo_files.items():
@@ -114,6 +115,7 @@ source_package_install = rule(
         "description_file": attr.label(allow_single_file = True),
         "description_content_type": attr.string(),
         "regular_file_mode": attr.string(values = ["", "0644", "0755"]),
+        "executable_files": attr.string_list(doc = "Package-relative payload paths installed executable, overriding regular_file_mode."),
         "extra_distinfo_files": attr.label_keyed_string_dict(allow_files = True),
         "site_packages": attr.string(mandatory = True),
         "scripts": attr.string(mandatory = True),
@@ -132,6 +134,9 @@ def _collect(deps, packages = [], tars = [], metadata = []):
         metadata = depset(metadata, transitive = [dep[PythonRuntimeInfo].metadata for dep in deps]),
     )
 
+def _installation_trees(targets):
+    return depset(transitive = [getattr(target[OutputGroupInfo], "installation_trees", depset()) for target in targets if OutputGroupInfo in target])
+
 def _runtime_impl(ctx):
     installed = ctx.attr.installation[_InstallationInfo]
     archive = ctx.file.tar
@@ -145,7 +150,7 @@ def _runtime_impl(ctx):
     return [
         DefaultInfo(files = depset([archive])),
         info,
-        OutputGroupInfo(metadata = info.metadata, runtime_tars = info.tars),
+        OutputGroupInfo(metadata = info.metadata, runtime_tars = info.tars, installation_trees = depset(transitive = [ctx.attr.installation[DefaultInfo].files, _installation_trees(ctx.attr.runtime_deps)])),
     ]
 
 source_package_runtime = rule(
@@ -159,7 +164,7 @@ source_package_runtime = rule(
 
 def _runtime_packages_impl(ctx):
     info = _collect(ctx.attr.deps)
-    return [DefaultInfo(files = info.tars), info, OutputGroupInfo(metadata = info.metadata)]
+    return [DefaultInfo(files = info.tars), info, OutputGroupInfo(metadata = info.metadata, installation_trees = _installation_trees(ctx.attr.deps))]
 
 python_runtime_packages = rule(
     implementation = _runtime_packages_impl,

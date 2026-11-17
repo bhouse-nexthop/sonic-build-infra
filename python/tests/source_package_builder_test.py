@@ -64,6 +64,26 @@ class SourcePackageTest(unittest.TestCase):
         metadata = BytesParser().parsebytes(source.generated["METADATA"])
         self.assertEqual(metadata["Requires-Dist"], 'speed>=1; (python_version >= \'3.12\') and extra == \'fast\'')
 
+    def test_executable_paths_preserve_scripts_with_regular_modules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            payload.write_bytes(b"declared content\n")
+            payload.chmod(0o555)
+            paths = ["native_demo/cli.py", "native_demo-3.1.data/scripts/helper",
+                     "native_demo-3.1.data/data/bin/native-helper"]
+            spec = self.spec(files=[{"source": str(payload), "path": path} for path in paths],
+                             regular_file_mode="0644", executable_files=paths[1:])
+            build_installation(spec, root / "tree", root / "mtree", root / "runtime")
+            for path, mode in [("different/site/native_demo/cli.py", 0o644),
+                               ("different/bin/helper", 0o755),
+                               ("different/data/bin/native-helper", 0o755)]:
+                self.assertEqual((root / "tree" / path).stat().st_mode & 0o777, mode)
+                self.assertEqual((root / "tree" / path).read_bytes(), b"declared content\n")
+        for path in ("missing.py", "../escape", "/absolute"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                PackageSource(self.spec(executable_files=[path]))
+
     def test_license_file_metadata_version_and_required_payload(self):
         self.assertEqual(BytesParser().parsebytes(PackageSource(self.spec()).generated["METADATA"])["Metadata-Version"], "2.1")
         with tempfile.TemporaryDirectory() as directory:

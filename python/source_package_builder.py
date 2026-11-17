@@ -48,6 +48,10 @@ class PackageSource(WheelSource):
             if path in self.files or any(part.endswith(".dist-info") for part in PurePosixPath(path).parts):
                 raise ValueError("Duplicate or reserved package path: " + path)
             self.files[path] = Path(item["source"])
+        self.executable_files = {relative_path(path) for path in spec.get("executable_files", [])}
+        unknown = self.executable_files - self.files.keys()
+        if unknown:
+            raise ValueError("Executable paths are absent from declared package files: " + ", ".join(sorted(unknown)))
         metadata = EmailMessage(policy=default.clone(max_line_length=0, utf8=True))
         license_files = [relative_path(value) for value in spec.get("license_files", [])]
         for name, value in [("Metadata-Version", "2.4" if license_files else "2.1"), ("Name", distribution), ("Version", version)]:
@@ -126,6 +130,7 @@ class PackageSource(WheelSource):
         for name, path in sorted(self.files.items()):
             with path.open("rb") as stream:
                 executable = self.regular_file_mode == "0755" if self.regular_file_mode else bool(path.stat().st_mode & 0o111)
+                executable = executable or name in self.executable_files
                 yield (name, "", ""), stream, executable
         for name, contents in sorted(self.generated.items()):
             with BytesIO(contents) as stream:

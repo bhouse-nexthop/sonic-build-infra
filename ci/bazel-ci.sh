@@ -63,6 +63,7 @@ tests=(
   //apt:lock_test
   //apt:bookworm_lock_test
   //python/tests:runtime_lock_test
+  //python/tests:inherited_runtime_test
   //python/tests:source_package_builder_test
   //python/tests:site_packages_test
   //apt:selection_test
@@ -276,6 +277,17 @@ fi
     --platforms="@sonic_build_infra//platforms:${cpu}_trixie" \
     --host_platform="@sonic_build_infra//platforms:${cpu}_trixie" //:consumer_test
   cp MODULE.bazel.lock "$artifacts/oci-controls-consumer.MODULE.bazel.lock"
+)
+# Existing lock-maintenance resolver tests, using the pinned development UV toolchain.
+(
+  cd tests/runtime_lock_uv_consumer
+  "${bazel_cmd[@]}" test "${resolution[@]}" --jobs=4 --test_output=errors \
+    --override_module="sonic-build-infra=$root" \
+    --build_event_json_file="$artifacts/runtime-lock-resolver.bep.json" \
+    //:real_resolver_test
+  mkdir -p "$artifacts/tests/runtime-lock-resolver"
+  cp bazel-testlogs/real_resolver_test/test.xml bazel-testlogs/real_resolver_test/test.log \
+    "$artifacts/tests/runtime-lock-resolver/"
 )
 python3 - "$artifacts" "$platform" <<'PYTHON'
 import hashlib, json, os, pathlib, subprocess, sys

@@ -45,6 +45,8 @@ def _plan_impl(ctx):
         "marker_environment",
         "source_distributions",
     ]}
+    if ctx.attr.site_packages:
+        values["site_packages"] = ctx.attr.site_packages
     values["metadata"] = [{"path": value.file.path, "producer": value.producer} for value in metadata.values()]
     values["constraints"] = constraints
     ctx.actions.write(manifest, json.encode(values))
@@ -67,6 +69,7 @@ python_runtime_plan = rule(
     doc = "Export self-contained source metadata and concrete-target resolver inputs; this action never resolves pip dependencies.",
     attrs = dict(_EXECUTION_ATTRS, **{
         "packages": attr.label_list(providers = [PythonRuntimeInfo]),
+        "site_packages": attr.string_list(doc = "Target Python search directories used to select installed distribution metadata. Empty preserves unfiltered archive discovery."),
         "roots": attr.string_list(mandatory = True),
         "source_distributions": attr.string_list(doc = "Names known to be source-built, including required producers that may be absent."),
         "python_version": attr.string(mandatory = True),
@@ -126,7 +129,7 @@ python_runtime_lock_check = rule(
     }),
 )
 
-def checked_python_runtime(name, plan, requirements, lock, inputs, sources = [], third_party = [], update_command = "", **kwargs):
+def checked_python_runtime(name, plan, requirements, lock, inputs, sources = [], third_party = [], inherited_sources = [], inherited_third_party = [], update_command = "", **kwargs):
     """Assemble runtime TARs with a mandatory, read-only lock freshness check.
 
     Args:
@@ -136,7 +139,11 @@ def checked_python_runtime(name, plan, requirements, lock, inputs, sources = [],
         lock: Checked-in requirements_lock.txt consumed by pip.parse.
         inputs: Checked-in input identity/digest record from runtime_lock update.
         sources: Source installation targets or python_runtime_packages collectors.
-        third_party: Installation TARs for the complete locked third-party closure.
+        third_party: New third-party installation TARs added by this consumer.
+        inherited_sources: Parent-layer source providers checked without reinstalling.
+        inherited_third_party: Parent-layer third-party TARs checked without reinstalling.
+            The plan includes the complete installed source closure. The combined
+            new and inherited payloads must satisfy its metadata and locked versions.
         update_command: Actual owner command shown when inputs are missing/stale.
         **kwargs: Common attributes forwarded to the check and flatten rules.
     """
@@ -149,8 +156,8 @@ def checked_python_runtime(name, plan, requirements, lock, inputs, sources = [],
         lock = lock,
         inputs = inputs,
         update_command = update_command,
-        sources = sources,
-        third_party = third_party,
+        sources = sources + inherited_sources,
+        third_party = third_party + inherited_third_party,
         **kwargs
     )
     python_runtime_packages(name = name + "_sources", deps = sources, **kwargs)
