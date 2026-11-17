@@ -34,6 +34,21 @@ debug tools and external OpenSSH library closure requested by
 the private Redis fixture used by installed-image checks. FRR, libFIB and the
 OpenSSH client continue to come from their source-owned installation TARs.
 
+The default AMD64 VS host uses `vs_host_debian`; source-built host packages
+and the BMP, DHCP relay, NAT and PMON images select their own build/runtime
+collections from the same graph. The host's Docker CE/CLI 28.5.2 and
+containerd.io 1.7.28 roots retain explicit version constraints.
+
+A source may declare `origin` and an explicit `suite_keys` map. For example,
+Docker's actual `trixie` suite maps to the logical key `docker-trixie`, while
+Debian keeps its original `trixie` identity. Requests list logical keys; index
+URLs use the actual suite from the source record. Two sources cannot claim the
+same logical key with different identities. Each collection's transitive graph
+must contain one identity per binary package name and effective architecture;
+`Architecture: all` uses the collection's native architecture. Cross-architecture
+inputs remain distinct, and independent collections may retain different versions.
+This identity check does not replace the resolver's Multi-Arch dependency rules.
+
 ## Update and check
 
 Use the fixed Bazel and Distroless versions selected by the owning workspace.

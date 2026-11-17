@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 
 
-RESOLVER_VERSION = "0.9.4.sonic.17"
+RESOLVER_VERSION = "0.9.4.sonic.20"
 IDENTITY_FIELDS = ("name", "version", "architecture", "suite", "filename", "sha256")
 
 
@@ -45,8 +45,19 @@ def source_records(document):
         for uri in entry["uris"]:
             if not isinstance(uri, str) or not uri:
                 raise ValueError("source URI must be a nonempty string")
-        for suite in entry["suites"]:
+        aliases = entry.get("suite_keys", {})
+        if not isinstance(aliases, dict) or any(key not in entry["suites"] for key in aliases):
+            raise ValueError("suite_keys must map configured actual suites")
+        origin = entry.get("origin", "")
+        if not isinstance(origin, str) or (aliases and not origin):
+            raise ValueError("suite_keys require a named origin")
+        for actual_suite in entry["suites"]:
+            suite = aliases.get(actual_suite, actual_suite)
+            if not isinstance(suite, str) or not suite or "/" in suite:
+                raise ValueError("logical suite key must be one nonempty path segment")
             record = {key: deepcopy(entry.get(key, [])) for key in ("uris", "components", "architectures", "types")}
+            if origin:
+                record.update(origin=origin, suite=actual_suite)
             if suite in records and records[suite] != record:
                 raise ValueError("conflicting source configuration for suite " + suite)
             records[suite] = record
@@ -102,6 +113,31 @@ def reachable(document):
     return seen
 
 
+def validate_collection_versions(document):
+    """Reject competing binary identities for the same effective architecture."""
+    for group, definition in document["dependency_sets"].items():
+        for architecture, roots in definition["sets"].items():
+            pending = [key + "=" + version for key, version in roots.items()]
+            seen, names = set(), {}
+            while pending:
+                key = pending.pop()
+                if key in seen:
+                    continue
+                seen.add(key)
+                package = document["packages"][key]
+                name = package["name"]
+                # Architecture: all has the native dpkg architecture (Debian
+                # Policy 5.6.34.1). Cross-architecture tool inputs stay distinct.
+                binary_architecture = package["architecture"]
+                effective_architecture = architecture if binary_architecture == "all" else binary_architecture
+                coordinate = (name, effective_architecture)
+                identity = tuple(package[field] for field in IDENTITY_FIELDS)
+                if coordinate in names and names[coordinate] != identity:
+                    raise ValueError("APT dependency set contains two versions or origins of " + name + ": " + group + "/" + architecture)
+                names[coordinate] = identity
+                pending.extend(package["depends_on"])
+
+
 def validate_lock(document):
     if document.get("version") != 2:
         raise ValueError("APT lock must have version 2")
@@ -131,6 +167,7 @@ def validate_lock(document):
         if not isinstance(files, list) or any(not isinstance(path, str) for path in files):
             raise ValueError("invalid package file mapping: " + key)
     reachable(document)
+    validate_collection_versions(document)
 
 
 def merge_locks(documents):
@@ -210,7 +247,7 @@ def finalize_result(candidate, previous, sources, requests, resolver_version,
         old_coordinates.setdefault(package_coordinate(key)[:3], set()).add(key)
     unchanged_sources = all(
         suite in expected_sources and all(record.get(field, []) == expected_sources[suite].get(field, [])
-                                         for field in ("uris", "types", "components"))
+                                         for field in ("uris", "types", "components", "origin", "suite"))
         for suite, record in previous.get("sources", {}).items()
     )
     if previous.get("packages") and not unchanged_sources and not allow_source_change:
@@ -299,8 +336,9 @@ def resolution_partitions(sources, requests):
     result = []
     for suites in sorted(groups, key=lambda group: sorted(group)):
         partition_sources = dict(sources, sources=[
-            dict(record, suites=[suite for suite in record["suites"] if suite in suites])
-            for record in sources["sources"] if suites.intersection(record["suites"])
+            dict(record, suites=[suite for suite in record["suites"] if record.get("suite_keys", {}).get(suite, suite) in suites],
+                 **({"suite_keys": {suite: key for suite, key in record["suite_keys"].items() if key in suites}} if "suite_keys" in record else {}))
+            for record in sources["sources"] if suites.intersection([record.get("suite_keys", {}).get(suite, suite) for suite in record["suites"]])
         ])
         partition_requests = dict(requests, dependency_sets={
             name: deepcopy(request) for name, request in requests["dependency_sets"].items()

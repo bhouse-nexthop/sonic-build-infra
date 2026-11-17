@@ -2355,6 +2355,397 @@
         "trixie-updates",
         "trixie-security"
       ]
+    },
+    "bash_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libncurses-dev:amd64",
+        "libcunit1-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "bmp_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libboost-dev:amd64",
+        "libyaml-cpp-dev:amd64",
+        "zlib1g-dev:amd64",
+        "libssl-dev:amd64",
+        "libsasl2-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "bmp_runtime_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libyaml-cpp0.8:amd64",
+        "zlib1g:amd64",
+        "libsasl2-2:amd64",
+        "libssl3t64:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "dhcp_relay_runtime_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libjsoncpp-dev:amd64",
+        "libpcap0.8-dev:amd64",
+        "libevent-2.1-7t64:amd64",
+        "libevent-pthreads-2.1-7t64:amd64",
+        "libboost-thread1.83.0:amd64",
+        "libhiredis1.1.0:amd64",
+        "libexplain51t64:amd64",
+        "python3-m2crypto:amd64",
+        "python3-netifaces:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "dhcp_relay_test_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libgtest-dev:amd64",
+        "libgmock-dev:amd64",
+        "libasan8:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "isc_dhcp_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "zlib1g-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "lm_sensors_debian": {
+      "include_transitive": true,
+      "packages": [
+        "librrd-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "makedumpfile_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libbz2-dev:amd64",
+        "libdw-dev:amd64",
+        "libelf-dev:amd64",
+        "liblzo2-dev:amd64",
+        "zlib1g-dev:amd64",
+        "libzstd-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "monit_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libssl-dev:amd64",
+        "zlib1g-dev:amd64",
+        "libpam0g-dev:amd64",
+        "libcrypt-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "nat_runtime_debian": {
+      "include_transitive": true,
+      "packages": [
+        "bridge-utils:amd64",
+        "conntrack:amd64",
+        "iptables:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "pmon_runtime_debian": {
+      "include_transitive": true,
+      "packages": [
+        "ipmitool:amd64",
+        "libyaml-cpp0.8:amd64",
+        "librrd8t64:amd64",
+        "librrd-dev:amd64",
+        "rrdtool:amd64",
+        "python3-smbus:amd64",
+        "dmidecode:amd64",
+        "i2c-tools:amd64",
+        "psmisc:amd64",
+        "python3-netifaces:amd64",
+        "libpci3:amd64",
+        "iputils-ping:amd64",
+        "pciutils:amd64",
+        "nvme-cli:amd64",
+        "ethtool:amd64",
+        "xxd:amd64",
+        "python3-yaml:amd64",
+        "python3-bottle:amd64",
+        "smartmontools:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "pycairo_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libcairo2-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "radius_pam_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libcrypt-dev:amd64",
+        "libnsl-dev:amd64",
+        "libpam0g-dev:amd64",
+        "libssl-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-security",
+        "trixie-updates"
+      ]
+    },
+    "rasdaemon_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libsqlite3-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "tacacs_build_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libssl-dev:amd64",
+        "libpam0g-dev:amd64",
+        "libaudit-dev:amd64",
+        "libauparse-dev:amd64",
+        "libcunit1-dev:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "vs_host_debian": {
+      "include_transitive": true,
+      "packages": [
+        "acl:amd64",
+        "apparmor:amd64",
+        "apt:amd64",
+        "apt-transport-https:amd64",
+        "arping:amd64",
+        "auditd:amd64",
+        "base-files:amd64",
+        "base-passwd:amd64",
+        "bash-completion:amd64",
+        "bridge-utils:amd64",
+        "bsdmainutils:amd64",
+        "busybox:amd64",
+        "ca-certificates:amd64",
+        "cgroup-tools:amd64",
+        "chrony:amd64",
+        "conntrack:amd64",
+        "coreutils:amd64",
+        "cracklib-runtime:amd64",
+        "cron:amd64",
+        "curl:amd64",
+        "dash:amd64",
+        "dbus:amd64",
+        "debianutils:amd64",
+        "device-tree-compiler:amd64",
+        "diffutils:amd64",
+        "dmidecode:amd64",
+        "dpkg:amd64",
+        "e2fsprogs:amd64",
+        "ebtables:amd64",
+        "efibootmgr:amd64",
+        "efitools:amd64",
+        "ethtool:amd64",
+        "fdisk:amd64",
+        "file:amd64",
+        "findutils:amd64",
+        "freeipmi-tools:amd64",
+        "gdisk:amd64",
+        "gir1.2-glib-2.0:amd64",
+        "gpg:amd64",
+        "grep:amd64",
+        "grub2-common:amd64",
+        "gzip:amd64",
+        "haveged:amd64",
+        "hdparm:amd64",
+        "hostname:amd64",
+        "hping3:amd64",
+        "i2c-tools:amd64",
+        "ifmetric:amd64",
+        "init-system-helpers:amd64",
+        "ipmitool:amd64",
+        "iputils-ping:amd64",
+        "isc-dhcp-client:amd64",
+        "j2cli:amd64",
+        "jq:amd64",
+        "kexec-tools:amd64",
+        "ldap-utils:amd64",
+        "less:amd64",
+        "libauparse0t64:amd64",
+        "libc-bin:amd64",
+        "libdbus-1-3:amd64",
+        "libffi-dev:amd64",
+        "libgirepository-1.0-1:amd64",
+        "libnss-ldapd:amd64",
+        "libpam-ldapd:amd64",
+        "libpam-pwquality:amd64",
+        "libpam-systemd:amd64",
+        "libssl-dev:amd64",
+        "libsystemd0:amd64",
+        "libubootenv-tool:amd64",
+        "linux-base:amd64",
+        "linux-perf:amd64",
+        "linux-sysctl-defaults:amd64",
+        "locales:amd64",
+        "login:amd64",
+        "logrotate:amd64",
+        "lsof:amd64",
+        "mokutil:amd64",
+        "mount:amd64",
+        "mtd-utils:amd64",
+        "mtr-tiny:amd64",
+        "ncurses-base:amd64",
+        "ncurses-bin:amd64",
+        "ndisc6:amd64",
+        "net-tools:amd64",
+        "nvme-cli:amd64",
+        "passwd:amd64",
+        "pciutils:amd64",
+        "perl-base:amd64",
+        "picocom:amd64",
+        "pigz:amd64",
+        "psmisc:amd64",
+        "python-is-python3:amd64",
+        "python3-apt:amd64",
+        "python3-cffi:amd64",
+        "python3-click:amd64",
+        "python3-cryptography:amd64",
+        "python3-dbus:amd64",
+        "python3-enlighten:amd64",
+        "python3-gi:amd64",
+        "python3-ijson:amd64",
+        "python3-lxml:amd64",
+        "python3-m2crypto:amd64",
+        "python3-natsort:amd64",
+        "python3-netifaces:amd64",
+        "python3-paramiko:amd64",
+        "python3-pip:amd64",
+        "python3-requests:amd64",
+        "python3-scapy:amd64",
+        "python3-scp:amd64",
+        "python3-setuptools:amd64",
+        "python3-watchdog:amd64",
+        "python3-wheel:amd64",
+        "resolvconf:amd64",
+        "rsyslog:amd64",
+        "rsyslog-relp:amd64",
+        "screen:amd64",
+        "sed:amd64",
+        "smartmontools:amd64",
+        "squashfs-tools:amd64",
+        "sudo:amd64",
+        "sysfsutils:amd64",
+        "sysstat:amd64",
+        "systemd:amd64",
+        "systemd-bootchart:amd64",
+        "systemd-sysv:amd64",
+        "sysvinit-utils:amd64",
+        "tar:amd64",
+        "tcpdump:amd64",
+        "tcptraceroute:amd64",
+        "tpm2-tools:amd64",
+        "traceroute:amd64",
+        "tzdata-legacy:amd64",
+        "u-boot-tools:amd64",
+        "unzip:amd64",
+        "usbutils:amd64",
+        "util-linux:amd64",
+        "util-linux-extra:amd64",
+        "vim:amd64",
+        "wireless-regdb:amd64",
+        "xxd:amd64",
+        "zstd:amd64",
+        "grub-efi-amd64-bin:amd64",
+        "grub-pc-bin:amd64",
+        "docker-ce:amd64 (= 5:28.5.2-1~debian.13~trixie)",
+        "docker-ce-cli:amd64 (= 5:28.5.2-1~debian.13~trixie)",
+        "containerd.io:amd64 (= 1.7.28-2~debian.13~trixie)",
+        "firmware-intel-misc:amd64",
+        "firmware-linux-nonfree:amd64",
+        "python3-systemd:amd64",
+        "libcairo2:amd64",
+        "sqlite3:amd64",
+        "libdbd-sqlite3-perl:amd64",
+        "liblua5.1-0:amd64",
+        "klibc-utils:amd64",
+        "cpio:amd64",
+        "kmod:amd64",
+        "libboost-serialization1.83.0:amd64",
+        "libhiredis1.1.0:amd64",
+        "libzmq5:amd64",
+        "libfido2-1:amd64",
+        "runit-helper:amd64",
+        "libwtmpdb0:amd64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security",
+        "docker-trixie"
+      ]
     }
   },
   "pinned_packages": [
