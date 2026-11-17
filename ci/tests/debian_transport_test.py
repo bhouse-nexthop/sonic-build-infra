@@ -175,7 +175,8 @@ class DebianTransportTest(unittest.TestCase):
             (root / 'ci/source_mirrors.cfg').write_bytes((ROOT / 'ci/source_mirrors.cfg').read_bytes())
             for path in ['python/wheel_layer.bzl', 'tar/root_owned_tar.bzl',
                          'tools/build_tools/prepare_rootfs.py', 'tools/build_tools/docbook_runtime_test.py',
-                         'tests/shared_api_consumer/MODULE.bazel']:
+                         'tests/shared_api_consumer/MODULE.bazel',
+                         'tests/oci_controls_consumer/MODULE.bazel']:
                 target = root / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.touch()

@@ -25,11 +25,18 @@ def _runtime_packages_impl(ctx):
     tar = ctx.toolchains[tar_lib.toolchain_type]
     args = ctx.actions.args()
     args.add("--control", ctx.file.control)
+    if not ctx.attr.shlibdeps:
+        args.add("--no-shlibdeps")
     args.add_all(ctx.attr.control_file_helpers, before_each = "--control-file-helper")
+    args.add("--control-file-helpers-by-package", json.encode({
+        name: [json.decode(command) for command in commands]
+        for name, commands in ctx.attr.control_file_helpers_by_package.items()
+    }))
     if ctx.file.changelog:
         args.add("--changelog", ctx.file.changelog)
     args.add("--module", ctx.attr.module_name)
     args.add("--architecture", ctx.attr.architecture)
+    args.add("--symbols-check-level", ctx.attr.symbols_check_level)
     args.add("--tools", ctx.file._tools.path)
     args.add("--tar", tar.tarinfo.binary)
     args.add("--output", output)
@@ -84,6 +91,8 @@ def _runtime_packages_impl(ctx):
 _runtime_packages = rule(
     implementation = _runtime_packages_impl,
     attrs = {
+        "symbols_check_level": attr.int(default = 1, values = [0, 1, 2, 3, 4], doc = "Original dpkg-gensymbols check level."),
+        "shlibdeps": attr.bool(default = True, doc = "Run original dh_shlibdeps dependency calculation; explicitly disable only for an empty source override."),
         "control": attr.label(allow_single_file = True, mandatory = True),
         "final_controls": attr.output_list(mandatory = True),
         "changelog": attr.label(allow_single_file = True),
@@ -101,6 +110,7 @@ _runtime_packages = rule(
         "control_file_helpers": attr.string_list(
             doc = "Internal JSON argv for explicitly declared metadata helpers; no maintainer scripts are executed.",
         ),
+        "control_file_helpers_by_package": attr.string_list_dict(),
         # These are the target compiler ABI packages, not tools selected by cfg=exec.
         "_abi_data": attr.label_list(default = [Label("@sysroot//" + name + ":data") for name in ["libc6", "libgcc-s1", "libstdc++6"]]),
         "_abi_controls": attr.label_list(default = [Label("@sysroot//" + name + ":control") for name in ["libc6", "libgcc-s1", "libstdc++6"]]),
@@ -110,7 +120,7 @@ _runtime_packages = rule(
     toolchains = [tar_lib.toolchain_type],
 )
 
-def runtime_packages(name, packages, control, changelog = None, apt_packages = {}, module_name = None, architecture = None, control_file_helpers = [], **kwargs):
+def runtime_packages(name, packages, control, changelog = None, apt_packages = {}, module_name = None, architecture = None, control_file_helpers = [], control_file_helpers_by_package = {}, **kwargs):
     """Generate owner metadata; package facts stay in the existing Debian files.
 
     packages maps Debian binary package names to their public runtime TAR targets.
@@ -118,6 +128,9 @@ def runtime_packages(name, packages, control, changelog = None, apt_packages = {
     Each listed path must exist before metadata is published; {multiarch} expands
     for the target architecture. Images may add their own integration checks.
     dependencies supplies source-built library metadata in target configuration.
+    shlibdeps=False is an explicit source recipe override for an empty
+    dh_shlibdeps target. It preserves ELF-needed evidence and skips only the
+    dependency substitution calculation; the default retains real dh_shlibdeps.
     apt_packages maps target APT data labels to their matching control labels.
     Neither input selects libraries from the execution tools' private runtime.
     control_file_helpers optionally lists the original specific helper argv in
@@ -140,6 +153,7 @@ def runtime_packages(name, packages, control, changelog = None, apt_packages = {
             Label("@platforms//cpu:aarch64"): "arm64",
         }),
         control_file_helpers = [json.encode(command) for command in control_file_helpers],
+        control_file_helpers_by_package = {package: [json.encode(command) for command in commands] for package, commands in control_file_helpers_by_package.items()},
         declared_targets = {package: "//" + target.package + ":" + target.name for package, target in labels.items()},
         apt_data = apt_packages.keys(),
         apt_controls = apt_packages.values(),

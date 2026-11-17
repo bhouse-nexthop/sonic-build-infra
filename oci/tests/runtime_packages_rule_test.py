@@ -77,6 +77,19 @@ class RuntimePackagesRuleTest(unittest.TestCase):
             self.assertIn("runtime package lacks required paths", result.stderr)
             self.assertFalse((root / "metadata.json").exists())
 
+    def test_per_package_helpers_reject_unknown_owners_and_commands(self):
+        cases = [({"unselected-package": [["dh_installdeb"]]}, "undeclared package"),
+                 ({"metadata-library": [["unknown-helper"], ["dh_installdeb"]]}, "invalid declared"),
+                 ({"metadata-library": [["dh_installinit"]]}, "finish with dh_installdeb")]
+        for mapping, error in cases:
+            with self.subTest(mapping=mapping), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                result = self.generate(root, control.resolve(), library,
+                    additional=["--control-file-helpers-by-package", json.dumps(mapping)])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+                self.assertFalse((root / "metadata.json").exists())
+
     def test_missing_target_library_cannot_fall_back_to_execution_runtime(self):
         """Declared dpkg tools include libc, but that libc cannot satisfy a target dependency."""
         self.assertTrue(list((tools / "usr/lib").glob("*/libc.so.6")))
@@ -249,6 +262,43 @@ class RuntimePackagesRuleTest(unittest.TestCase):
                     self.assertNotIn("Depends", fields)
                 self.assertNotIn("${", json.dumps(fields))
                 self.assertEqual(item["payload_sha256"], hashlib.sha256(library.read_bytes()).hexdigest())
+
+    def test_declared_symbols_check_level_preserves_real_dpkg_policy(self):
+        for level in (0, 4):
+            with self.subTest(level=level), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                template = root / "symbols"
+                template.write_text("libmetadata-fixture.so.1 metadata-library #MINVER#\n removed_symbol@Base 1.0\n")
+                result = self.generate(root, control.resolve(), library, additional=[
+                    "--symbols", "metadata-library=" + str(template),
+                    "--symbols-check-level", str(level),
+                    "--apt-package", str(libc_data.resolve()) + "=" + str(libc_control.resolve()),
+                ])
+                if level == 0:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("dpkg-gensymbols", result.stderr)
+                    self.assertFalse((root / "metadata.json").exists())
+
+    def test_resource_heavy_payload_does_not_expand_target_search_environment(self):
+        """Data directories need no per-directory ELF authorization to dpkg."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_control = self.control(root, "metadata-resources", "Depends: base-files", architecture="all")
+            payload = root / "data.tar"
+            with tarfile.open(payload, "w") as archive:
+                # Resource catalogs such as sonic-device-data have thousands of
+                # independent directories. This is a regression input, not a limit.
+                for index in range(2000):
+                    member = tarfile.TarInfo("usr/share/catalog/" + str(index) + "-" + "resource" * 16 + "/empty")
+                    archive.addfile(member)
+            result = self.generate(root, source_control, payload, package="metadata-resources")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            package = json.loads((root / "metadata.json").read_text())["packages"]["metadata-resources"]
+            self.assertEqual(package["control_fields"]["Depends"], "base-files")
+            self.assertEqual(package["control_fields"]["Architecture"], "all")
+            self.assertEqual(package["payload_sha256"], hashlib.sha256(payload.read_bytes()).hexdigest())
 
     def test_non_elf_payload_has_no_shlibs_pre_dependencies(self):
         """A source's shlibs variable resolves empty when its TAR has no ELF."""

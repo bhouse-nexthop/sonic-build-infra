@@ -335,3 +335,39 @@ py_test(
         "control_files/service-fixture.preinst", "control_files/service-fixture.postinst", "control_files/service-fixture.postrm",
     ],
 )
+
+[
+    tar(
+        name = "control_payload_" + name,
+        testonly = True,
+        srcs = ["control_files/service-fixture.init"],
+        mtree = ["etc/init.d/" + name + " type=file uid=0 gid=0 mode=0755 time=0 content=$(location control_files/service-fixture.init)"],
+    )
+    for name in ["fancontrol", "lm-sensors"]
+]
+runtime_packages(
+    name = "per_package_control_files",
+    testonly = True,
+    control = "control_files/per-package-control",
+    changelog = "control_files/changelog",
+    packages = {"fancontrol": ":control_payload_fancontrol", "lm-sensors": ":control_payload_lm-sensors", "metadata-library": ":metadata_library_tar"},
+    apt_packages = {"@sysroot//libc6:data": "@sysroot//libc6:control"},
+    debian_files = {name + ".init": "control_files/service-fixture.init" for name in ["fancontrol", "lm-sensors"]},
+    control_file_helpers = [["dh_installdeb"]],
+    control_file_helpers_by_package = {
+        "fancontrol": [["dh_installinit", "--restart-after-upgrade"], ["dh_installdeb"]],
+        "lm-sensors": [["dh_installinit", "--no-start"], ["dh_installdeb"]],
+        "metadata-library": [["dh_makeshlibs"], ["dh_installdeb"]],
+    },
+)
+filegroup(name = "per_package_control_tree", testonly = True, srcs = [":per_package_control_files"], output_group = "debian")
+py_test(
+    name = "runtime_per_package_control_test",
+    srcs = ["runtime_per_package_control_test.py"],
+    args = ["$(location :per_package_control_files)", "$(location :per_package_control_tree)"],
+    data = [":per_package_control_files", ":per_package_control_tree"],
+)
+
+# PAM RADIUS deliberately overrides dh_shlibdeps with an empty recipe.
+runtime_packages(name="metadata_library_no_shlibdeps.json",testonly=True,control="metadata/debian/control",changelog="metadata/debian/changelog",packages={"metadata-library":":metadata_library_tar"},shlibdeps=False)
+py_test(name="runtime_empty_shlibdeps_test",srcs=["runtime_empty_shlibdeps_test.py"],args=["$(rootpath :metadata_library_no_shlibdeps.json)","$(rootpath :metadata_library.json)","$(rootpath :metadata_library_tar)","$(rootpath //tools/build_tools:kernel_runtime)","$(rootpath metadata/debian/control)","$(rootpath metadata/debian/changelog)"],data=[":metadata_library_no_shlibdeps.json",":metadata_library.json",":metadata_library_tar","//tools/build_tools:kernel_runtime","metadata/debian/control","metadata/debian/changelog"],deps=["//oci:runtime_packages_lib"])

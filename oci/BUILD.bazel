@@ -47,6 +47,7 @@ py_library(
     imports = ["."],
     deps = [
         ":package_metadata",
+        "//deb:elf_metadata",
         "//apt:lib",
     ],
 )
@@ -56,3 +57,6 @@ py_binary(
     srcs = ["runtime_packages.py"],
     deps = [":runtime_packages_lib"],
 )
+
+exports_files(["source_controls.bzl"])
+py_binary(name = "source_controls_tool", srcs = ["source_controls.py"], main = "source_controls.py")

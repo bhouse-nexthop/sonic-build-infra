@@ -12,6 +12,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import shlex
 import stat
 import struct
 import subprocess
@@ -22,6 +23,7 @@ from debian.changelog import Changelog
 from debian.deb822 import Deb822
 
 from sonic_oci.paths import expand_required_paths
+from elf_metadata import Elf
 
 
 ARCHITECTURES = {"amd64": 62, "arm64": 183, "armhf": 40}
@@ -218,6 +220,15 @@ def tool_environment(tools, scratch, architecture):
     (database / "info/format").write_text("1\n")
     target_root = scratch / "empty-target-root"
     target_root.mkdir()
+    # po2debconf supports a data-directory override, but intltool-merge's
+    # original shebang points at /usr/bin/perl. Keep that program unchanged and
+    # select the declared Perl through a tiny private forwarding launcher.
+    intltool = scratch / "intltool-debian"
+    intltool.mkdir(exist_ok=True)
+    launcher = intltool / "intltool-merge"
+    launcher.write_text("#!/bin/sh\nexec " + shlex.quote(str(tools / "bin/perl")) + " -w " +
+                        shlex.quote(str(tools / "usr/share/intltool-debian/intltool-merge")) + ' "$@"\n')
+    launcher.chmod(0o755)
     environment = {
         "PATH": str(tools / "bin"), "HOME": str(scratch), "TMPDIR": str(scratch),
         "LANG": "C", "LC_ALL": "C", "SOURCE_DATE_EPOCH": "0", "DPKG_NLS": "0",
@@ -226,6 +237,10 @@ def tool_environment(tools, scratch, architecture):
         # dh_gencontrol supplies empty misc variables when no helper generated
         # a dependency. Actual helper-produced values may be passed explicitly.
         "DEB_RULES_REQUIRES_ROOT": "no",
+        "PODEBCONF_LIB": str(intltool),
+        "PODEBCONF_ENCODINGS": str(tools / "usr/share/po-debconf/encodings"),
+        "INTLTOOL_ICONV": str(tools / "bin/iconv"),
+        "G_CHARSET_ALIAS": str(tools / "usr/lib/charset.alias"),
     }
     return environment
 
@@ -354,16 +369,21 @@ def helper_substitutions(dpkg, name, root, fields, debian, provided, control_fil
 
 
 def generate(*, control, changelog, module, architecture, tools, tar, output, tree,
-             packages, dependencies=(), apt_packages=(), symbols=None, substvars=None, debian_files=None, required_paths=None, final_controls=None, control_file_helpers=()):
-    allowed_helpers = {"dh_systemd_enable", "dh_installinit", "dh_systemd_start",
-                       "dh_installsystemd", "dh_installdeb"}
-    require(all(isinstance(command, list) and command and
-                all(isinstance(argument, str) for argument in command) and
-                command[0] in allowed_helpers for command in control_file_helpers),
-            "invalid declared Debian control-file helper")
-    if control_file_helpers:
-        require(control_file_helpers[-1][0] == "dh_installdeb",
-                "control-file helpers must finish with dh_installdeb")
+             packages, dependencies=(), apt_packages=(), symbols=None, substvars=None, debian_files=None, required_paths=None, final_controls=None, control_file_helpers=(), control_file_helpers_by_package=None, shlibdeps=True, symbols_check_level=1):
+    allowed_helpers = {"dh_systemd_enable", "dh_installinit", "dh_systemd_start", "dh_installmenu", "dh_makeshlibs",
+                       "dh_installsystemd", "dh_installudev", "dh_installinitramfs", "dh_python3", "dh_installdeb"}
+    control_file_helpers_by_package = control_file_helpers_by_package or {}
+    require(isinstance(control_file_helpers_by_package, dict) and
+            set(control_file_helpers_by_package) <= set(packages),
+            "control-file helpers refer to an undeclared package")
+    for commands in [control_file_helpers, *control_file_helpers_by_package.values()]:
+        require(isinstance(commands, (list, tuple)) and all(isinstance(command, list) and command and
+                    all(isinstance(argument, str) for argument in command) and
+                    command[0] in allowed_helpers for command in commands),
+                "invalid declared Debian control-file helper")
+        if commands:
+            require(commands[-1][0] == "dh_installdeb",
+                    "control-file helpers must finish with dh_installdeb")
     source, stanzas, version = source_definition(control, changelog)
     require(module and set(packages) <= set(stanzas), "runtime package mapping differs from Debian control")
     require(packages, "runtime package mapping is empty")
@@ -391,7 +411,7 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
         generated_stanzas = {name: dict(fields) for name, fields in stanzas.items()}
         for name in packages:
             fields = generated_stanzas[name]
-            if not any("${shlibs:" in value for value in fields.values()):
+            if shlibdeps and not any("${shlibs:" in value for value in fields.values()):
                 fields["Depends"] = ", ".join(filter(None, [fields.get("Depends"), "${shlibs:Depends}"]))
         (debian / "control").write_text("\n".join(Deb822(item).dump() for item in [source, *generated_stanzas.values()]))
         if changelog:
@@ -429,7 +449,7 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
             # Generate actual source library symbol metadata before calculating
             # any package's dependencies; sibling packages may depend on it.
             args = ["-p" + name, "-v" + version, "-a" + architecture, "-P" + str(root),
-                    "-O" + str(root / "DEBIAN/symbols")]
+                    "-O" + str(root / "DEBIAN/symbols"), "-c" + str(symbols_check_level)]
             if name in symbols:
                 args.append("-I" + str(symbols[name]))
             if native:
@@ -447,19 +467,27 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
         # cached output. Authorize those declared files' real parent paths as
         # well as the package roots; do not authorize unrelated RPATH entries.
         allowed_roots = set(roots)
+        candidates = {path for record in own.values() for path in record["native"]}
         for root in roots:
             for path in root.rglob("*"):
-                if path.is_file():
-                    allowed_roots.add(path.resolve().parent)
+                if ".so" in path.name and path.is_file():
+                    with path.open("rb") as stream:
+                        if stream.read(4) == b"\x7fELF":
+                            candidates.add(path)
+        for path in candidates:
+            resolved = path.resolve()
+            if not any(resolved.is_relative_to(root) for root in roots):
+                allowed_roots.add(resolved.parent)
         dpkg.environment["SONIC_DPKG_TARGET_ROOTS"] = "\n".join(map(str, sorted(allowed_roots)))
         search = ["-S" + str(root) for root in roots]
         search += ["-l" + str(directory) for directory in library_directories(roots)]
         result = {}
         for name, record in own.items():
+            helpers = control_file_helpers_by_package.get(name, control_file_helpers)
             supplied = read_substvars(substvars.get(name))
             variables = dict(supplied)
             # Finalized binary controls already contain helper dependencies.
-            generated = (helper_substitutions(dpkg, name, record["root"], generated_stanzas[name], debian, variables, control_file_helpers)
+            generated = (helper_substitutions(dpkg, name, record["root"], generated_stanzas[name], debian, variables, helpers)
                          if changelog is not None else {})
             require(not set(generated) & set(variables), "duplicate generated and supplied Debian substitutions")
             variables.update(generated)
@@ -473,7 +501,7 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
                     "shlibs substitutions must be computed from the runtime payload")
             shlibs_fields = sorted({variable[7:] for value in generated_stanzas[name].values()
                                     for variable in VARIABLE.findall(value) if variable.startswith("shlibs:")})
-            if record["native"]:
+            if shlibdeps and record["native"]:
                 shlibs_args = []
                 for field in shlibs_fields:
                     shlibs_args.extend(["-d" + field, *("-e" + str(path) for path in record["native"])])
@@ -505,12 +533,17 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
             result[name] = {"runtime_target": record["label"],
                             "control_fields": {key: value for key, value in fields.items() if key not in INSTALLED_FIELDS - {"Architecture"}},
                             "payload_sha256": record["payload_sha256"]}
-            if control_file_helpers:
-                result[name]["control_files"] = {
-                    path.name: {"path": str(path.relative_to(tree)), "sha256": sha(path),
-                                "mode": format(stat.S_IMODE(path.stat().st_mode), "04o")}
-                    for path in sorted((record["root"] / "DEBIAN").iterdir())
-                }
+            if not shlibdeps:
+                result[name]["shlibdeps"] = False
+                result[name]["elf_needed"] = {str(path.relative_to(record["root"])): Elf(path.read_bytes()).needed for path in record["native"]}
+            # Publish the authoritative generated tree even when the original
+            # source recipe has no maintainer-script helpers. Its real control
+            # and symbol files are still needed by image package installation.
+            result[name]["control_files"] = {
+                path.name: {"path": str(path.relative_to(tree)), "sha256": sha(path),
+                            "mode": format(stat.S_IMODE(path.stat().st_mode), "04o")}
+                for path in sorted((record["root"] / "DEBIAN").iterdir())
+            }
             if name in required_paths:
                 result[name]["required_paths"] = list(required_paths[name])
         for name, destination in final_controls.items():
@@ -567,6 +600,9 @@ def main():
     parser.add_argument("--architecture", choices=ARCHITECTURES)
     for name in ("package", "dependency", "apt-package", "symbols", "substvars", "merge", "debian-file", "required-path", "final-control", "control-file-helper"):
         parser.add_argument("--" + name, action="append", default=[])
+    parser.add_argument("--symbols-check-level", type=int, choices=range(5), default=1)
+    parser.add_argument("--no-shlibdeps", action="store_true", help="Original source recipe explicitly skips dh_shlibdeps")
+    parser.add_argument("--control-file-helpers-by-package", default="{}")
     args = parser.parse_args()
     if args.merge:
         merge([Path(path) for path in args.merge], args.output)
@@ -591,7 +627,8 @@ def main():
              apt_packages=[tuple(Path(path).resolve() for path in value.split("=", 1)) for value in args.apt_package],
              symbols=named_paths(args.symbols), substvars=named_paths(args.substvars),
              debian_files=named_paths(args.debian_file),
-             control_file_helpers=[json.loads(value) for value in args.control_file_helper])
+             control_file_helpers=[json.loads(value) for value in args.control_file_helper],
+             control_file_helpers_by_package=json.loads(args.control_file_helpers_by_package), shlibdeps=not args.no_shlibdeps, symbols_check_level=args.symbols_check_level)
 
 
 if __name__ == "__main__":

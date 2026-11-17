@@ -54,6 +54,8 @@ tests=(
   //deps:alternatives_test
   //oci/tests:runtime_packages_test //oci/tests:runtime_packages_rule_test
   //oci/tests:runtime_control_files_rule_test
+  //oci/tests:runtime_per_package_control_test
+  //oci/tests:runtime_empty_shlibdeps_test
   //oci/tests:installed_packages_test
   //oci/tests:owner_metadata_test //oci/tests:installed_packages_rule_test
   //oci/tests:installed_packages_alias_test
@@ -263,6 +265,14 @@ if [[ -f tests/shared_api_consumer/MODULE.bazel ]]; then
     done
   )
 fi
+# Resolve and consume the public control-projection API as a separate root module.
+(
+  cd tests/oci_controls_consumer
+  "${bazel_cmd[@]}" test "${resolution[@]}" --jobs=4 --nocache_test_results \
+    --platforms="@sonic_build_infra//platforms:${cpu}_trixie" \
+    --host_platform="@sonic_build_infra//platforms:${cpu}_trixie" //:consumer_test
+  cp MODULE.bazel.lock "$artifacts/oci-controls-consumer.MODULE.bazel.lock"
+)
 python3 - "$artifacts" "$platform" <<'PYTHON'
 import hashlib, json, os, pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])

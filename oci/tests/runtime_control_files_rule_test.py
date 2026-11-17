@@ -62,8 +62,11 @@ class RuntimeControlFilesRuleTest(unittest.TestCase):
         self.assertIn("_dh_action=restart", restart_default)
         self.assertRegex(restart_default, r"invoke-rc.d [^\n]*service-fixture \$_dh_action")
 
-    def test_default_api_and_all_payload_bytes_remain_unchanged(self):
-        self.assertNotIn("control_files", self.package(default))
+    def test_default_control_is_published_without_adding_scripts_or_changing_payload(self):
+        self.assertEqual(set(self.package(default)["control_files"]), {"control"})
+        control, record = self.control(default, default_tree, "control")
+        self.assertIn("Package: service-fixture\n", control)
+        self.assertEqual(record["mode"], "0644")
         self.assertFalse((default_tree / "packages/service-fixture/DEBIAN/postinst").exists())
         for metadata, tree in [(preserved, preserved_tree), (restart, restart_tree), (default, default_tree)]:
             self.assertEqual(self.package(metadata)["payload_sha256"], digest(payload))
