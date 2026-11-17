@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import io
+import importlib.metadata
 import os
 import stat
 import tarfile
@@ -35,6 +36,80 @@ def plan(sources=(), roots=("example-service[metrics]",), **changes):
     requests, selected = external_requests(value)
     value.update(external_requirements=requests, selected_sources=selected)
     return value
+
+
+class ProvidedDistributionLockTest(unittest.TestCase):
+    def test_external_lock_cannot_install_a_declared_source_again(self):
+        value = plan([source("local-service", requires=["idna>=3"])], roots=["local-service"])
+        hashed = " --hash=sha256:" + "a" * 64 + "\n"
+        with self.assertRaisesRegex(RuntimeLockError, "source distributions appeared"):
+            validate_lock(value, "idna==3.10" + hashed + "local-service==1.2" + hashed)
+
+
+class DebianInstalledMetadataTest(unittest.TestCase):
+    def test_pep376_and_legacy_debian_metadata_have_the_same_distribution_identity(self):
+        # Python importlib.metadata consumes both dist-info and egg-info.
+        # Debian Python packages can retain the latter installation format.
+        with tempfile.TemporaryDirectory() as directory:
+            archives = []
+            for index, suffix in enumerate((".dist-info/METADATA", ".egg-info/PKG-INFO", ".egg-info")):
+                path = Path(directory) / (str(index) + ".tar")
+                payload = b"Metadata-Version: 2.1\nName: sensor-bindings\nVersion: 3.7\nRequires-Dist: native-core>=2\n\n"
+                with tarfile.open(path, "w") as archive:
+                    member = tarfile.TarInfo("usr/lib/python3/dist-packages/sensor_bindings-3.7" + suffix)
+                    member.size = len(payload)
+                    archive.addfile(member, io.BytesIO(payload))
+                archives.append(path)
+            self.assertEqual(installed_distributions(archives[:1]), installed_distributions(archives[1:2]))
+            self.assertEqual(installed_distributions(archives[:1]), installed_distributions(archives[2:]))
+            self.assertEqual(installed_distributions(archives[:1])["sensor-bindings"]["version"], "3.7")
+            with self.assertRaisesRegex(RuntimeLockError, "duplicate installed distribution"):
+                installed_distributions(archives)
+
+
+    def test_target_search_roots_are_explicit_plan_inputs(self):
+        manifest = dict(roots=[], python_version="3.13", python_platform="x86_64-unknown-linux-gnu",
+                        uv_version="0.12.18", index_urls=[], find_links=[], no_index=True,
+                        marker_environment={}, source_distributions=[], metadata=[], constraints=[])
+        self.assertNotIn("site_packages", runtime_lock.make_plan(manifest))
+        first = runtime_lock.make_plan(dict(manifest, site_packages=["/opt/runtime/site"]))
+        second = runtime_lock.make_plan(dict(manifest, site_packages=["/srv/python"]))
+        self.assertEqual(first["site_packages"], ["/opt/runtime/site"])
+        self.assertEqual(second["site_packages"], ["/srv/python"])
+        self.assertNotEqual(first, second)
+        for root in ("relative/site", "/opt/../outside"):
+            with self.subTest(root=root), self.assertRaisesRegex(RuntimeLockError, "absolute target search directories"):
+                runtime_lock.make_plan(dict(manifest, site_packages=[root]))
+
+    def test_custom_installation_directory_remains_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom.tar"
+            payload = b"Metadata-Version: 2.1\nName: custom-package\nVersion: 1.0\n\n"
+            with tarfile.open(path, "w") as archive:
+                member = tarfile.TarInfo("opt/runtime/site/custom_package-1.0.dist-info/METADATA")
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
+            self.assertEqual(set(installed_distributions([path])), {"custom-package"})
+            self.assertEqual(set(installed_distributions([path], site_packages=["/opt/runtime/site"])), {"custom-package"})
+
+    def test_vendored_metadata_is_not_a_top_level_distribution(self):
+        # Python's sys.path points to dist-packages, not setuptools/_vendor.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "packages.tar"
+            with tarfile.open(path, "w") as archive:
+                for relative, name in (("setuptools-80.dist-info/METADATA", "setuptools"),
+                                       ("setuptools/_vendor/wheel-0.45.dist-info/METADATA", "wheel")):
+                    payload = ("Metadata-Version: 2.1\nName: " + name + "\nVersion: 1.0\n\n").encode()
+                    member = tarfile.TarInfo("usr/lib/python3/dist-packages/" + relative)
+                    member.size = len(payload)
+                    archive.addfile(member, io.BytesIO(payload))
+            installed = Path(directory) / "root"
+            with tarfile.open(path) as archive:
+                archive.extractall(installed, filter="data")
+            observed = {item.metadata["Name"] for item in importlib.metadata.distributions(
+                path=[str(installed / "usr/lib/python3/dist-packages")])}
+            self.assertEqual(observed, {"setuptools"})
+            self.assertEqual(set(installed_distributions([path], site_packages=["/usr/lib/python3/dist-packages"])), observed)
 
 
 class RuntimePlanTest(unittest.TestCase):
@@ -131,7 +206,7 @@ class RuntimePlanTest(unittest.TestCase):
                 with tarfile.open(path, "w") as output:
                     for distribution, body in metadata.items():
                         contents = body.encode()
-                        item = tarfile.TarInfo("site/" + distribution + ".dist-info/METADATA")
+                        item = tarfile.TarInfo("usr/local/lib/python3.13/dist-packages/" + distribution + ".dist-info/METADATA")
                         item.size = len(contents)
                         output.addfile(item, io.BytesIO(contents))
                 return path

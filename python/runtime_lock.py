@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 from urllib.parse import urlsplit
 
 from packaging.requirements import Requirement
@@ -129,6 +130,11 @@ def make_plan(manifest):
         "roots", "python_version", "python_platform", "uv_version", "index_urls",
         "find_links", "no_index", "marker_environment", "source_distributions",
     ]}
+    if manifest.get("site_packages"):
+        roots = manifest["site_packages"]
+        if any(not root.startswith("/") or ".." in Path(root).parts for root in roots):
+            raise RuntimeLockError("site_packages must contain absolute target search directories")
+        plan["site_packages"] = sorted(set(str(Path(root)) for root in roots))
     if not plan["uv_version"]:
         raise RuntimeLockError("uv_version must be fixed by the lock owner")
     for url in plan["index_urls"]:
@@ -188,6 +194,10 @@ def locked_packages(content):
 def validate_lock(plan, content):
     packages = locked_packages(content)
     requests, _ = external_requests(plan)
+    provided = {canonicalize_name(name) for name in plan.get("source_distributions", [])}
+    provided.update(canonicalize_name(source["distribution"]) for source in plan["sources"])
+    if set(packages) & provided:
+        raise RuntimeLockError("source distributions appeared in external runtime lock: " + ", ".join(sorted(set(packages) & provided)))
     for raw in requests:
         requirement = Requirement(raw)
         name = canonicalize_name(requirement.name)
@@ -222,12 +232,19 @@ def check(plan, requirements, lock, inputs):
 
 
 
-def installed_distributions(archives):
+def installed_distributions(archives, site_packages=None):
     result = {}
+    search_paths = {Path(root.lstrip("/")).parts for root in site_packages} if site_packages else None
     for path in archives:
         with tarfile.open(path) as archive:
             for member in archive:
-                if not member.isfile() or not member.name.endswith(".dist-info/METADATA"):
+                if not member.isfile() or not member.name.endswith((".dist-info/METADATA", ".egg-info/PKG-INFO", ".egg-info")):
+                    continue
+                parts = Path(member.name).parts
+                metadata_parent = parts[:-1] if parts[-1].endswith(".egg-info") else parts[:-2]
+                # Only the owner knows the target sys.path. An explicit search
+                # root excludes vendored metadata without restricting its name.
+                if search_paths is not None and metadata_parent not in search_paths:
                     continue
                 metadata = BytesParser().parsebytes(archive.extractfile(member).read())
                 name = canonicalize_name(metadata["Name"] or "")
@@ -248,8 +265,8 @@ def verify_installation(plan, lock_content, source_tars, third_party_tars):
     expected_external = validate_lock(plan, lock_content)
     expected_sources = {canonicalize_name(source["distribution"]): source for source in plan["sources"]
                         if canonicalize_name(source["distribution"]) in plan["selected_sources"]}
-    sources = installed_distributions(source_tars)
-    external = installed_distributions(third_party_tars)
+    sources = installed_distributions(source_tars, plan.get("site_packages"))
+    external = installed_distributions(third_party_tars, plan.get("site_packages"))
     if set(sources) != set(expected_sources):
         raise RuntimeLockError("source installation set differs from plan: expected " +
                                repr(sorted(expected_sources)) + "; got " + repr(sorted(sources)))
@@ -340,6 +357,30 @@ def update(plan, requirements, lock, inputs, uv, cache_dir=None):
         command += ["pip", "compile", str(request_file), "--python-version", plan["python_version"],
                     "--python-platform", plan["python_platform"], "--generate-hashes", "--no-header",
                     "--no-annotate", "--no-emit-index-url", "--output-file", str(lock_file)]
+        # Resolve third-party backedges against the actual producer metadata.
+        # Metadata-only, uncompressed wheels are temporary solver inputs; the
+        # installed source payload remains the separately declared original TAR.
+        producer_constraints = []
+        for source in plan["sources"]:
+            name = canonicalize_name(source["distribution"])
+            version = str(Version(source["version"]))
+            stem = name.replace("-", "_") + "-" + version
+            artifact = stage / (stem + "-py3-none-any.whl")
+            metadata = "Metadata-Version: 2.1\nName: " + name + "\nVersion: " + version + "\n"
+            if source.get("requires_python"):
+                metadata += "Requires-Python: " + source["requires_python"] + "\n"
+            metadata += "".join("Requires-Dist: " + value + "\n" for value in source.get("requires_dist", []))
+            metadata += "".join("Provides-Extra: " + value + "\n" for value in source.get("extras", []))
+            with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_STORED) as wheel:
+                wheel.writestr(stem + ".dist-info/METADATA", metadata + "\n")
+                wheel.writestr(stem + ".dist-info/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                wheel.writestr(stem + ".dist-info/RECORD", "")
+            producer_constraints.append(name + " @ " + artifact.as_uri() + "\n")
+            command += ["--no-emit-package", name]
+        if producer_constraints:
+            producer_file = stage / "provided-distributions.txt"
+            producer_file.write_text("".join(producer_constraints))
+            command += ["--constraint", str(producer_file)]
         if plan["no_index"]:
             command.append("--no-index")
         for index, url in enumerate(plan["index_urls"]):

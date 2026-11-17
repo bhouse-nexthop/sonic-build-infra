@@ -60,7 +60,7 @@ class RealUvUpdateTest(unittest.TestCase):
 
     def package_plan(self, requires):
         return plan([source("image-service", requires=requires)], roots=["image-service"],
-                    find_links=[str(self.links)], python_version="3.11")
+                    find_links=[str(self.links)], python_version="3.11", uv_version=UV_VERSION)
 
     def run_update(self, value):
         return update(value, self.req, self.lock, self.inputs, UV, self.cache)
@@ -75,6 +75,18 @@ class RealUvUpdateTest(unittest.TestCase):
             artifact = next(path for path in self.wheels if path.name.startswith(name.replace("-", "_") + "-" + package["version"] + "-"))
             self.assertIn(hashlib.sha256(artifact.read_bytes()).hexdigest(), package["hashes"])
         self.assertNotIn("image-service", packages)
+        check(value, self.req, self.lock, self.inputs)
+
+    def test_external_dependency_reuses_declared_source_without_downloading_it(self):
+        # PEP 508 dependencies can point back to a distribution already supplied
+        # by a source/APT producer. No wheel for provided-core exists in the index.
+        wheel(self.links, "fixture-wrapper", "1.0", ["provided-core>=1"])
+        value = plan([source("image-service", requires=["fixture-wrapper", "provided-core"]),
+                      source("provided-core", version="1.2", requires=["fixture-added"])],
+                     roots=["image-service"], find_links=[str(self.links)],
+                     python_version="3.11", uv_version=UV_VERSION)
+        self.run_update(value)
+        self.assertEqual(set(locked_packages(self.lock.read_text())), {"fixture-wrapper", "fixture-added"})
         check(value, self.req, self.lock, self.inputs)
 
     def test_existing_versions_retained_while_inputs_and_roots_change(self):
@@ -95,9 +107,19 @@ class RealUvUpdateTest(unittest.TestCase):
             self.run_update(self.package_plan(["fixture-external>=99"]))
         self.assertEqual(before, [path.read_bytes() for path in (self.req, self.lock, self.inputs)])
 
+    def test_external_backedge_resolves_against_provided_version(self):
+        wheel(self.links, "backedge-client", "1.0", ["provided-core>=1"])
+        wheel(self.links, "backedge-client", "2.0", ["provided-core>=9"])
+        value = plan([source("provided-core", version="1.2")], roots=["backedge-client"],
+                     find_links=[str(self.links)], python_version="3.11", uv_version=UV_VERSION)
+        self.run_update(value)
+        packages = locked_packages(self.lock.read_text())
+        self.assertEqual(set(packages), {"backedge-client"})
+        self.assertEqual(packages["backedge-client"]["version"], "1.0")
+
     def test_new_source_constraint_stales_lock_even_when_external_set_is_equal(self):
         original = plan([source("image-service", requires=["common>=1", "fixture-external<2"]), source("common")],
-                        roots=["image-service"], find_links=[str(self.links)], python_version="3.11")
+                        roots=["image-service"], find_links=[str(self.links)], python_version="3.11", uv_version=UV_VERSION)
         self.run_update(original)
         lock_bytes = self.lock.read_bytes()
         changed = copy.deepcopy(original)
@@ -131,6 +153,8 @@ class RealUvUpdateTest(unittest.TestCase):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--uv", type=Path, required=True)
+    parser.add_argument("--uv-version", default="0.12.18")
     args, other = parser.parse_known_args()
     UV = args.uv.resolve()
+    UV_VERSION = args.uv_version
     unittest.main(argv=[sys.argv[0]] + other)

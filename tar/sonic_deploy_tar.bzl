@@ -34,6 +34,9 @@ _runtime_tar = rule(
 )
 
 def _sonic_deploy_tar_impl(name, force_debug_build, preserve_install_rpath, compress_debug_sections, install_rpath, binaries = {}, srcs = [], mtree = [], debug_symlinks = {}, **kwargs):
+    # Symbolic macros supply None for omitted common attributes.
+    # Legacy tar/expand_template macros require a concrete tags sequence.
+    kwargs["tags"] = kwargs.get("tags") or []
     # We strip each binary and generate its mtree line pointing at the stripped ELF
     stripped_targets = []
     debug_targets = []
