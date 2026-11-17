@@ -49,6 +49,11 @@ must contain one identity per binary package name and effective architecture;
 inputs remain distinct, and independent collections may retain different versions.
 This identity check does not replace the resolver's Multi-Arch dependency rules.
 
+`bsdtar_tools_debian` selects `libarchive-tools` and its runtime dependencies
+for AMD64 and ARM64 execution. Archive actions consume those tools through
+`tools/build_tools` and the tar.bzl execution toolchain, separately from target
+payload/library collections and the existing repository bootstrap tar inputs.
+
 ## Update and check
 
 Use the fixed Bazel and Distroless versions selected by the owning workspace.

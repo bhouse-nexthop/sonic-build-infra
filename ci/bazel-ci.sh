@@ -48,6 +48,7 @@ patch_tools_location=$("${bazel_cmd[@]}" query "${resolution[@]}" --output=locat
 python3 -B source/tests/prepared_source_test.py --bazel bazel \
   --gnu-tools-root "$(dirname "${patch_tools_location%%:*}")"
 tests=(
+  //tools/build_tools/bsdtar_tests:bsdtar_test
   //go:lock_test
   //deb:assemble_test
   //tests:hello_deb_optional_fields_build_test

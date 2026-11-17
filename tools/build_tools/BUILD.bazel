@@ -10,6 +10,8 @@ load("@rules_python//python:defs.bzl", "py_test", "py_binary")
 load(":defs.bzl", "build_tool", "build_tools_rootfs", "build_tools_runtime", "check_build_tools", "python_runtime", "source_build_tool", "source_runtime")
 
 load(":kernel_roots.bzl", "KERNEL_TOOL_ROOTS")
+load(":elf_runtime_tool.bzl", "elf_runtime_tool")
+load("@tar.bzl//tar/toolchain:toolchain.bzl", "tar_toolchain")
 
 python_runtime(name = "python_runtime", visibility = ["//visibility:public"])
 
@@ -1309,4 +1311,60 @@ py_test(
     ],
     data = [":dwp", ":p4rt_patchelf", "//tests:hello"],
     target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:linux"],
+)
+
+# Raw APT members avoid invoking an archive action while preparing its tool.
+[
+    build_tools_runtime(
+        name = "bsdtar_runtime_" + architecture,
+        architecture = architecture,
+        profile = "elf",
+        elf_tools = {"bsdtar": "usr/bin/bsdtar"},
+        packages = ["@bsdtar_tools_debian//libarchive-tools/" + architecture + ":raw_packages"],
+        target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:" + cpu],
+    )
+    for architecture, cpu in [("amd64", "x86_64"), ("arm64", "aarch64")]
+]
+alias(
+    name = "bsdtar_runtime",
+    actual = select({
+        "@platforms//cpu:x86_64": ":bsdtar_runtime_amd64",
+        "@platforms//cpu:aarch64": ":bsdtar_runtime_arm64",
+    }),
+    visibility = ["//visibility:public"],
+)
+elf_runtime_tool(
+    name = "bsdtar",
+    runtime = ":bsdtar_runtime",
+    tool = "bsdtar",
+    visibility = ["//visibility:public"],
+)
+tar_toolchain(
+    name = "apt_bsdtar_implementation",
+    binary = ":bsdtar",
+)
+[
+    toolchain(
+        name = "apt_bsdtar_" + architecture + "_toolchain",
+        toolchain = ":apt_bsdtar_implementation",
+        toolchain_type = "@tar.bzl//tar/toolchain:type",
+        exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:" + cpu],
+        visibility = ["//visibility:public"],
+    )
+    for architecture, cpu in [("amd64", "x86_64"), ("arm64", "aarch64")]
+]
+
+filegroup(
+    name = "bsdtar_executable_file",
+    testonly = True,
+    srcs = [":bsdtar"],
+    output_group = "binary",
+    visibility = ["//tools/build_tools/bsdtar_tests:__pkg__"],
+)
+filegroup(
+    name = "bsdtar_runtime_files",
+    testonly = True,
+    srcs = [":bsdtar"],
+    output_group = "runtime",
+    visibility = ["//tools/build_tools/bsdtar_tests:__pkg__"],
 )

@@ -2746,6 +2746,18 @@
         "trixie-security",
         "docker-trixie"
       ]
+    },
+    "bsdtar_tools_debian": {
+      "include_transitive": true,
+      "packages": [
+        "libarchive-tools:amd64",
+        "libarchive-tools:arm64"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
     }
   },
   "pinned_packages": [
