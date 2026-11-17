@@ -45,6 +45,7 @@ def _install_impl(ctx):
         "description_content_type",
         "regular_file_mode",
         "executable_files",
+        "normalize_scripts",
     ]}
     extra_distinfo_files = []
     for target, dest in ctx.attr.extra_distinfo_files.items():
@@ -114,6 +115,7 @@ source_package_install = rule(
         "project_urls": attr.string_dict(),
         "description_file": attr.label(allow_single_file = True),
         "description_content_type": attr.string(),
+        "normalize_scripts": attr.bool(default = False, doc = "Normalize Python shebangs in this distribution's .data/scripts files to the wheel marker before target-interpreter installation."),
         "regular_file_mode": attr.string(values = ["", "0644", "0755"]),
         "executable_files": attr.string_list(doc = "Package-relative payload paths installed executable, overriding regular_file_mode."),
         "extra_distinfo_files": attr.label_keyed_string_dict(allow_files = True),

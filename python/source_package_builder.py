@@ -39,6 +39,7 @@ class PackageSource(WheelSource):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_]*", version):
             raise ValueError("Expected a normalized package version: " + version)
         super().__init__(re.sub(r"[-_.]+", "_", distribution).lower(), version)
+        self.normalize_scripts = spec.get("normalize_scripts", False)
         self.regular_file_mode = spec.get("regular_file_mode", "")
         if self.regular_file_mode not in ("", "0644", "0755"):
             raise ValueError("regular_file_mode must be empty, 0644 or 0755")
@@ -131,6 +132,14 @@ class PackageSource(WheelSource):
             with path.open("rb") as stream:
                 executable = self.regular_file_mode == "0755" if self.regular_file_mode else bool(path.stat().st_mode & 0o111)
                 executable = executable or name in self.executable_files
+                if self.normalize_scripts and name.startswith(self.data_dir + "/scripts/"):
+                    contents = stream.read()
+                    # Match the existing sonic_rules wheel policy. PyPA's
+                    # installer then substitutes the declared interpreter.
+                    if re.match(br"^#![^\n]*\bpython(?:[0-9.]+)?(?:[ \t]*|[ \t]+.*)\n", contents):
+                        yield (name, "", ""), BytesIO(b"#!python\n" + contents.split(b"\n", 1)[1]), executable
+                        continue
+                    stream.seek(0)
                 yield (name, "", ""), stream, executable
         for name, contents in sorted(self.generated.items()):
             with BytesIO(contents) as stream:

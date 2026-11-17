@@ -22,6 +22,25 @@ import zipfile
 
 
 class InstalledPackageTest(unittest.TestCase):
+    def test_source_script_policy_is_explicit_and_targeted(self):
+        original = Path(ARGS.raw_script).read_bytes()
+        plain = Path(ARGS.plain_script).read_bytes()
+        normalized = b"#!/selected/python3.13\n" + original.split(b"\n", 1)[1]
+        for path, expected in ((ARGS.normalized_script, normalized), (ARGS.preserved_script, original)):
+            with self.subTest(archive=path), tarfile.open(path, "r:") as archive:
+                entries = {m.name.removeprefix("./"): m for m in archive if m.isfile()}
+                payload = {name: archive.extractfile(m).read() for name, m in entries.items()}
+                self.assertEqual(payload["fixture/bin/helper"], expected)
+                self.assertEqual(payload["fixture/bin/plain.py"], plain)
+                for name in ("fixture/bin/helper", "fixture/bin/plain.py"):
+                    self.assertEqual(entries[name].mode, 0o755)
+                record = payload["fixture/site/script_fixture-1.0.dist-info/RECORD"]
+                records = {row[0]: row[1:] for row in csv.reader(io.StringIO(record.decode()))}
+                for name in ("helper", "plain.py"):
+                    data = payload["fixture/bin/" + name]
+                    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+                    self.assertEqual(records["../bin/" + name], ["sha256=" + digest, str(len(data))])
+
     def test_installed_package_and_metadata_match_wheel(self):
         with tarfile.open(ARGS.demo) as archive:
             payload = {member.name.removeprefix("./"): archive.extractfile(member).read()
@@ -112,5 +131,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     for key in ("demo", "wheel", "tars", "metadata"):
         parser.add_argument("--" + key, required=True, **({"nargs": "+"} if key in ("tars", "metadata") else {}))
+    for key in ("normalized-script", "preserved-script", "raw-script", "plain-script"):
+        parser.add_argument("--" + key, required=True)
     ARGS, extra = parser.parse_known_args()
     unittest.main(argv=[sys.argv[0]] + extra)
