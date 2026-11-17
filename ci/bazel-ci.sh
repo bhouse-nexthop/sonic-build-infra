@@ -78,6 +78,7 @@ tests=(
   //tests:hello_build_test
   //tests:hello_cpp_build_test
   //tests:hello_strip_test
+  //binary/tests:strip_static_archive_tests
   //tests:hello_rpath_preservation_test
   //tests:hello_runpath_preservation_test
   //tests:hello_static_preservation_test
@@ -221,6 +222,15 @@ fi
   --build_event_json_file="$artifacts/tests.bep.json" "${tests[@]}"
 # Include external test labels and their canonical repository paths in artifacts.
 cp -aL bazel-testlogs "$artifacts/testlogs"
+# Verify target-aware archive stripping with AMD64 execution and ARM64 inputs.
+# The checker runs on the host; no ARM64 program executes in this action.
+if [[ "$cpu" == x86_64 ]]; then
+  "${bazel_cmd[@]}" build "${flags[@]}" --platforms=//platforms:aarch64_trixie \
+    --build_event_json_file="$artifacts/strip-static-archive-cross.bep.json" \
+    //binary/tests:strip_static_archive_check
+  cp bazel-bin/binary/tests/strip_static_archive_check.json \
+    "$artifacts/strip-static-archive-cross.json"
+fi
 # The image consumer runs Python 3.13; retain its separate hub/runfiles proof.
 "${bazel_cmd[@]}" test "${apt_python_flags[@]}" --nocache_test_results --test_output=errors \
   --build_event_json_file="$artifacts/apt-python313-tests.bep.json" "${apt_python_tests[@]}"
