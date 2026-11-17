@@ -16,6 +16,7 @@ arguments, tests = parser.parse_known_args()
 TOOLS = dict(value.split('=', 1) for value in arguments.tool)
 
 PROBES = {
+    'pigz': (['--version'], b'pigz'),
     'mksquashfs': (['-version'], b'mksquashfs'),
     'unsquashfs': (['-help'], b'unsquashfs'),
     'qemu-img': (['--version'], b'qemu-img'),
@@ -36,10 +37,21 @@ PROBES = {
     'depmod': (['--version'], b'kmod'),
     'modprobe': (['--version'], b'kmod'),
     'busybox': (['--list-full'], b'bin/sh'),
+    'mkpasswd': (['--version'], b'mkpasswd'),
 }
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_password_hash_matches_libxcrypt_known_answer(self):
+        if 'mkpasswd' not in TOOLS:
+            self.skipTest('mkpasswd target was not selected')
+        # libxcrypt test/ka-table.inc yescrypt known-answer vector.
+        result = subprocess.run([str(Path(TOOLS['mkpasswd']).absolute()),
+                                 '--method=yescrypt', '--salt=$y$j75$LdJMENpBABJJ3hIHjB1Bi.', '--stdin'],
+                                input=b'abc\n', env={**os.environ, 'PATH': ''}, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), b'$y$j75$LdJMENpBABJJ3hIHjB1Bi.$aN8IREm4mVoXwP2ZkEbfFinwVjML6Krr5zkB50rSJX3')
+
     def test_public_tools_run_declared_programs(self):
         self.assertTrue(TOOLS, 'the native test must receive the declared executable targets')
         for name, path in TOOLS.items():

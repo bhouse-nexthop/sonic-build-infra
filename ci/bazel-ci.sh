@@ -113,6 +113,7 @@ tests=(
   //swig/tests:defines_test
   //swig:extract_templates_test
   //tools/build_tools:image_runtime_test
+  //tools/build_tools:elf_runtime_test
   //tools/build_tools:manual_runtime_test
   //tests:deploy_tar_timestamps_test
   //toolchains/gcc/tests:foreign_link_test
@@ -210,6 +211,9 @@ for filename in ('actions.json', 'apt-python313-actions.json', 'bookworm-actions
     (root / filename.replace('actions.json', 'action-audit.json')).write_text(json.dumps(receipt, indent=2) + '\n')
     assert not receipt['deb_outputs'] and not forbidden, receipt
 PYTHON
+if [[ "$cpu" == x86_64 ]]; then
+  tests+=(//tools/build_tools:p4rt_owner_tools_test)
+fi
 "${bazel_cmd[@]}" test "${flags[@]}" --nocache_test_results --test_output=errors \
   --build_event_json_file="$artifacts/tests.bep.json" "${tests[@]}"
 # Include external test labels and their canonical repository paths in artifacts.

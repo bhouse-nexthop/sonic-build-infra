@@ -131,6 +131,7 @@ build_test(
 cc_binary(
     name = "hello",
     srcs = ["//tests/testdata:hello.c"],
+    visibility = ["//tools/build_tools:__pkg__"],
 )
 
 build_test(

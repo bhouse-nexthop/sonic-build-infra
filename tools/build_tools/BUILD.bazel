@@ -877,6 +877,7 @@ alias(
 
 # Execute public wrappers, including their runfiles and relocated runtime.
 _IMAGE_RUNTIME_TEST_TOOLS = [
+    "pigz",
     "mksquashfs",
     "unsquashfs",
     "qemu-img",
@@ -894,6 +895,7 @@ _IMAGE_RUNTIME_TEST_TOOLS = [
     "depmod",
     "modprobe",
     "busybox",
+    "mkpasswd",
 ]
 
 py_test(
@@ -1201,4 +1203,110 @@ py_test(
     args = ["$(location :docbook_runtime)", "$(location :docbook2man)"] + ["$(location @wpa_man_" + name + "//file)" for name in ["wpa_background", "wpa_cli", "wpa_passphrase", "wpa_supplicant", "wpa_supplicant_conf"]],
     data = [":docbook_runtime", ":docbook2man"] + ["@wpa_man_" + name + "//file" for name in ["wpa_background", "wpa_cli", "wpa_passphrase", "wpa_supplicant", "wpa_supplicant_conf"]],
     target_compatible_with = ["@platforms//cpu:x86_64"],
+)
+
+# Additional image consumers receive only the selected executable's APT closure.
+[
+    build_tools_runtime(
+        name = name + "_runtime_" + architecture,
+        architecture = architecture,
+        profile = "elf",
+        elf_tools = {name: executable},
+        packages = ["@image_tools//" + package],
+        target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:" + cpu],
+    )
+    for name, package, executable in [("pigz", "pigz", "usr/bin/pigz"), ("mkpasswd", "whois", "usr/bin/mkpasswd")]
+    for architecture, cpu in [("amd64", "x86_64"), ("arm64", "aarch64")]
+]
+[
+    alias(
+        name = name + "_runtime",
+        actual = select({
+            "@platforms//cpu:x86_64": ":" + name + "_runtime_amd64",
+            "@platforms//cpu:aarch64": ":" + name + "_runtime_arm64",
+        }),
+    )
+    for name in ["pigz", "mkpasswd"]
+]
+[
+    build_tool(name = name, tool = name, runtime = ":" + name + "_runtime", visibility = ["//visibility:public"])
+    for name in ["pigz", "mkpasswd"]
+]
+
+# Original kdump-tools shellcheck uses the current native APT executable.
+[
+    build_tools_runtime(
+        name = "shellcheck_runtime_" + architecture,
+        architecture = architecture,
+        profile = "elf",
+        elf_tools = {"shellcheck": "usr/bin/shellcheck"},
+        packages = ["@image_tools//shellcheck"],
+        target_compatible_with = ["@platforms//os:linux", "@platforms//cpu:" + cpu],
+    )
+    for architecture, cpu in [("amd64", "x86_64"), ("arm64", "aarch64")]
+]
+alias(
+    name = "shellcheck_runtime",
+    actual = select({
+        "@platforms//cpu:x86_64": ":shellcheck_runtime_amd64",
+        "@platforms//cpu:aarch64": ":shellcheck_runtime_arm64",
+    }),
+)
+build_tool(name = "shellcheck", tool = "shellcheck", runtime = ":shellcheck_runtime", visibility = ["//visibility:public"])
+
+# P4RT's existing Bazel 6 owner requires GNU DWP for its split-DWARF product.
+build_tools_runtime(
+    name = "dwp_runtime",
+    architecture = "amd64",
+    packages = ["@p4rt_owner_tools_debian//binutils-gold/amd64"],
+    profile = "elf",
+    elf_tools = {"dwp": "usr/bin/dwp"},
+    target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:linux"],
+)
+build_tool(
+    name = "dwp",
+    runtime = ":dwp_runtime",
+    tool = "dwp",
+    visibility = ["//visibility:public"],
+)
+
+# This P4 owner test tool follows APT-first policy without changing kernel tools.
+build_tools_runtime(
+    name = "p4rt_patchelf_runtime",
+    architecture = "amd64",
+    packages = ["@p4rt_owner_tools_debian//patchelf/amd64"],
+    profile = "elf",
+    elf_tools = {"patchelf": "usr/bin/patchelf"},
+    target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:linux"],
+)
+build_tool(
+    name = "p4rt_patchelf",
+    runtime = ":p4rt_patchelf_runtime",
+    tool = "patchelf",
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "elf_runtime_test",
+    srcs = ["elf_tools_test.py"],
+    main = "elf_tools_test.py",
+    args = [
+        "--shellcheck=$(rootpath :shellcheck)",
+        "--pigz=$(rootpath :pigz)",
+        "--gzip-wrapper=$(rootpath //tools/gzip:reproducible_gzip)",
+    ],
+    data = [":shellcheck", ":pigz", "//tools/gzip:reproducible_gzip"],
+)
+
+py_test(
+    name = "p4rt_owner_tools_test",
+    srcs = ["elf_tools_test.py"],
+    main = "elf_tools_test.py",
+    args = [
+        "--dwp=$(rootpath :dwp)",
+        "--patchelf=$(rootpath :p4rt_patchelf)",
+        "--binary=$(rootpath //tests:hello)",
+    ],
+    data = [":dwp", ":p4rt_patchelf", "//tests:hello"],
+    target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:linux"],
 )

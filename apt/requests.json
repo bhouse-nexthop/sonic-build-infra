@@ -751,7 +751,13 @@
         "dash:amd64",
         "dash:arm64",
         "qemu-system-x86:amd64",
-        "seabios:amd64"
+        "seabios:amd64",
+        "pigz:amd64",
+        "pigz:arm64",
+        "whois:amd64",
+        "whois:arm64",
+        "shellcheck:amd64",
+        "shellcheck:arm64"
       ],
       "suites": [
         "trixie",
@@ -2331,6 +2337,18 @@
         "sshpass:amd64 (= 1.10-0.1)",
         "strace:amd64 (= 6.13+ds-1)",
         "vim:amd64 (= 2:9.1.1230-2)"
+      ],
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ]
+    },
+    "p4rt_owner_tools_debian": {
+      "include_transitive": true,
+      "packages": [
+        "binutils-gold:amd64",
+        "patchelf:amd64"
       ],
       "suites": [
         "trixie",
