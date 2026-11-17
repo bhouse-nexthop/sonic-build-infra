@@ -5,9 +5,10 @@ Use `http_archive` for one fixed archive and ordinary patches. Use
 merges, patch stages and nested extraction. Compilation still uses native
 language rules against the prepared files.
 
-`prepared_source` calls only Bazel repository builtins. `steps` is an ordered
-list of JSON strings with four fixed operation schemas; it cannot
-execute commands or evaluate expressions. Version, URLs, checksums, paths,
+`prepared_source` uses Bazel repository builtins by default. Explicit GNU patch
+steps use the declared, locked APT tool repository described below. `steps` is an
+ordered list of JSON strings with five fixed operation schemas; callers cannot
+embed commands or evaluate expressions. Version, URLs, checksums, paths,
 patch order and BUILD declarations belong to the caller.
 
 ```starlark
@@ -63,10 +64,16 @@ file-change tracking; those files are read directly, without staging a copy.
 | Operation | Required keys besides `op` | Optional keys |
 | --- | --- | --- |
 | `archive` | `urls`: nonempty URL list; `sha256`: fixed hex digest | `strip_prefix`, `output` (default repository root) |
-| `patch` | `input`: a key in `inputs` | `strip` (default 1), `format` (default `native`) |
-| `patch_series`, repository file | `series`: repository-relative series path | `strip` (default 1), `format` (default `native`) |
-| `patch_series`, label input | `series_input`: key in `inputs`; `patch_inputs`: ordered input keys | `strip` (default 1), `format` (default `native`) |
-| `extract` | `archive`: repository-relative archive path | `strip_prefix`, `output` (default repository root) |
+| `patch` | `input`: a key in `inputs` | `strip` (default 1), `format` (default `native`), `fuzz` (GNU only, default 0) |
+| `patch_series`, repository file | `series`: repository-relative series path | `strip` (default 1), `format` (default `native`), `fuzz` (GNU only, default 0) |
+| `patch_series`, label input | `series_input`: key in `inputs`; `patch_inputs`: ordered input keys | `strip` (default 1), `format` (default `native`), `fuzz` (GNU only, default 0) |
+| `extract`, repository archive | `archive`: repository-relative archive path | `strip_prefix`, `output` (default repository root) |
+| `extract`, label archive | `archive_input`: a key in `inputs` | `strip_prefix`, `output` (default repository root) |
+
+Each `extract` requires exactly one of `archive` or `archive_input`. Label archives
+are consumed directly from their declared inputs without staging a copy. Changes
+to the archive bytes invalidate repository preparation. This supports reusing a
+bundled archive exported by an existing source repository.
 
 Each archive merges into `output` when that step runs. A later archive replaces
 an earlier file at the same path, matching `repository_ctx.download_and_extract`
@@ -92,6 +99,29 @@ selected Bazel version supports the required behavior. Unified mode rejects Git
 metadata and binary patches. Binary patches require separately verified,
 declared tooling; `native` is not a general binary-patch engine. Per-step `strip`
 applies unchanged in both modes.
+
+Use `format = "gnu"` only when the fixed original build requires GNU patch
+semantics. Declare its tool repository from the shared APT lock, then pass its
+`ROOT` label through `gnu_tools`:
+
+```starlark
+patch_tools_repository = use_repo_rule(
+    "@sonic_build_infra//source:patch_tools.bzl", "patch_tools_repository",
+)
+patch_tools_repository(
+    name = "source_patch_tools", lock = "@sonic_build_infra//apt:apt.lock.json",
+)
+# In prepared_source(...):
+# gnu_tools = "@source_patch_tools//:ROOT",
+# steps = [..., '{"op":"patch","input":"original.patch","format":"gnu","fuzz":2}'],
+```
+
+The repository selects the host architecture's locked GNU patch and library
+closure. Its private loader runs with an empty PATH. Patch files and the tool
+manifest participate in repository invalidation. There is no automatic fallback
+from native or unified mode. GNU mode defaults to zero fuzz; a nonzero limit must
+be justified against the original build and fixed source. `fuzz` is a
+nonnegative integer and is rejected for the other modes.
 
 A series allows blank lines and whole-line `#` comments. Each remaining line
 must be one relative patch path. Per-patch arguments and inline comments are
@@ -126,4 +156,10 @@ unified-diff fixtures check adjacent files, header-like hunk payload, multiple
 hunks and omitted counts, `/dev/null` creation/deletion, unchanged original patch
 inputs, label-change invalidation, scratch collisions, incorrect context and
 hunk counts, and rejected Git metadata. It needs no compiler, remote dependency
-downloads or host `patch` executable.
+downloads or host `patch` executable. To run the additional real GNU context
+matching and patch-change tests, pass `--gnu-tools-root /absolute/path/to/the/
+declared/source_patch_tools` (as one path argument). Those tests use its actual
+locked loader and executable; without this option the GNU execution case is
+skipped.
+
+The ordered `file` step accepts `input` and `path`. It replaces the same-repository destination with a symlink to the declared input label, preserving exact bytes and the input executable bit. The repository explicitly reads the input to track changes. This implements the original build recipe’s fixed `config.sub` / `config.guess` replacement without copying or running a shell. The destination follows the existing relative-path and repository-boundary checks.

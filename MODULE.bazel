@@ -826,3 +826,7 @@ http_file(
     sha256 = "beaaa9115d9e26080ea3a4405748276d9c65a307fcd21147352133e58b6b9829",
     downloaded_file_path = "wpa_supplicant.conf.sgml",
 )
+
+# Test the same locked GNU patch repository used by source consumers.
+patch_tools_repository = use_repo_rule("//source:patch_tools.bzl", "patch_tools_repository")
+patch_tools_repository(name = "source_patch_tools", lock = "//apt:apt.lock.json")

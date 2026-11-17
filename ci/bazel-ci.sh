@@ -43,6 +43,10 @@ bazel_cmd=(bazel --ignore_all_rc_files)
 # Exercise cold repository setup and lock-change invalidation with queries only.
 # The workflow runs this on both native AMD64 and ARM64 hosts.
 python3 -B apt/tests/integration/inputs_repository_test.py --bazel bazel
+# Exercise real archive/file inputs and the locked GNU patch recipe.
+patch_tools_location=$("${bazel_cmd[@]}" query "${resolution[@]}" --output=location @source_patch_tools//:ROOT)
+python3 -B source/tests/prepared_source_test.py --bazel bazel \
+  --gnu-tools-root "$(dirname "${patch_tools_location%%:*}")"
 tests=(
   //go:lock_test
   //deb:assemble_test

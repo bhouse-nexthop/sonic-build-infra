@@ -1,4 +1,6 @@
-"""Prepare fixed archives and ordered patch stages with repository builtins."""
+"""Prepare fixed archives and explicitly selected ordered patch recipes."""
+
+load(":patch_tools.bzl", "gnu_patch")
 
 def _path(value, description, allow_empty = False):
     if type(value) != "string" or (not value and not allow_empty):
@@ -110,11 +112,20 @@ def _unified_sections(content):
 
 def _format(step):
     value = step.get("format", "native")
-    if value not in ["native", "unified"]:
-        fail("patch format must be native or unified")
+    if value not in ["native", "unified", "gnu"]:
+        fail("patch format must be native, unified or gnu")
     return value
 
-def _patch(ctx, patch, strip, patch_format):
+def _fuzz(step, patch_format):
+    value = step.get("fuzz", 0)
+    if type(value) != "int" or value < 0 or ("fuzz" in step and patch_format != "gnu"):
+        fail("fuzz must be a nonnegative integer for an explicit GNU patch recipe")
+    return value
+
+def _patch(ctx, patch, strip, patch_format, fuzz = 0):
+    if patch_format == "gnu":
+        gnu_patch(ctx, patch, strip, fuzz)
+        return
     if patch_format == "native":
         ctx.patch(patch, strip = strip)
         return
@@ -129,8 +140,9 @@ def _patch(ctx, patch, strip, patch_format):
     ctx.delete(scratch)
 
 def _series(ctx, step):
-    _keys(step, ["op"], ["series", "series_input", "patch_inputs", "strip", "format"])
+    _keys(step, ["op"], ["series", "series_input", "patch_inputs", "strip", "format", "fuzz"])
     patch_format = _format(step)
+    fuzz = _fuzz(step, patch_format)
     external = "series_input" in step
     if external == ("series" in step):
         fail("patch_series requires exactly one of series or series_input")
@@ -162,7 +174,7 @@ def _series(ctx, step):
         fail("patch_inputs must match the ordered full relative series paths: " + str(patches))
     strip = _strip(step)
     for name in patches:
-        _patch(ctx, _input(ctx, name) if external else _local(ctx, name), strip, patch_format)
+        _patch(ctx, _input(ctx, name) if external else _local(ctx, name), strip, patch_format, fuzz)
 
 def _prepared_source_impl(ctx):
     for name in ctx.attr.inputs:
@@ -185,15 +197,28 @@ def _prepared_source_impl(ctx):
                 output = _local(ctx, step.get("output", ""), allow_empty = True),
                 stripPrefix = _path(step.get("strip_prefix", ""), "archive strip_prefix", allow_empty = True),
             )
+        elif op == "file":
+            _keys(step, ["op", "input", "path"], [])
+            source = _input(ctx, step["input"])
+            # Track the declared label even though the final view is a symlink.
+            ctx.read(source)
+            target = _local(ctx, step["path"])
+            if target.exists:
+                ctx.delete(target)
+            ctx.symlink(source, target)
         elif op == "patch":
-            _keys(step, ["op", "input"], ["strip", "format"])
-            _patch(ctx, _input(ctx, step["input"]), _strip(step), _format(step))
+            _keys(step, ["op", "input"], ["strip", "format", "fuzz"])
+            patch_format = _format(step)
+            _patch(ctx, _input(ctx, step["input"]), _strip(step), patch_format, _fuzz(step, patch_format))
         elif op == "patch_series":
             _series(ctx, step)
         elif op == "extract":
-            _keys(step, ["op", "archive"], ["output", "strip_prefix"])
+            _keys(step, ["op"], ["archive", "archive_input", "output", "strip_prefix"])
+            if ("archive" in step) == ("archive_input" in step):
+                fail("extract requires exactly one of archive or archive_input")
+            archive = _input(ctx, step["archive_input"]) if "archive_input" in step else _local(ctx, step["archive"])
             ctx.extract(
-                _local(ctx, step["archive"]),
+                archive,
                 output = _local(ctx, step.get("output", ""), allow_empty = True),
                 stripPrefix = _path(step.get("strip_prefix", ""), "extract strip_prefix", allow_empty = True),
             )
@@ -204,8 +229,9 @@ def _prepared_source_impl(ctx):
 prepared_source = repository_rule(
     implementation = _prepared_source_impl,
     attrs = {
-        "steps": attr.string_list(mandatory = True, doc = "Ordered JSON strings using archive, patch, patch_series or extract; json.encode is available in .bzl files."),
+        "steps": attr.string_list(mandatory = True, doc = "Ordered JSON strings using archive, file, patch, patch_series or extract; json.encode is available in .bzl files."),
         "inputs": attr.string_keyed_label_dict(allow_files = True, doc = "Logical relative paths mapped to tracked patch/series file labels."),
+        "gnu_tools": attr.label(allow_single_file = True, doc = "ROOT from patch_tools_repository; required only for explicit GNU patch steps."),
         "build_file": attr.label(mandatory = True, allow_single_file = True),
     },
     doc = "Prepare source through fixed ordered archive/patch stages, then inject its BUILD file. Uses no shell commands.",
