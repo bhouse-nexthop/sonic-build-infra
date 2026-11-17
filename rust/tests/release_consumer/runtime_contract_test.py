@@ -33,8 +33,7 @@ with tempfile.TemporaryDirectory() as temporary:
     assert str(symbols[0]).endswith("/" + runtime_id[:2] + "/" + runtime_id[2:] + ".debug")
     assert ".debug_info" not in read("-S", binary)
     assert ".debug_info" in read("-S", symbols[0])
-    debuglink = read("--string-dump=.gnu_debuglink", binary)
-    assert symbols[0].name in debuglink, debuglink
+    # .gnu_debuglink ends with four arbitrary CRC bytes, not UTF-8 text.
     # readelf's section dump is independent of the producer and retains CRC bytes.
     dump = read("-x", ".gnu_debuglink", binary)
     words = []
@@ -43,6 +42,7 @@ with tempfile.TemporaryDirectory() as temporary:
         if match:
             words.extend(match.group(1).split())
     raw = bytes.fromhex("".join(words))
+    assert raw[:raw.index(b"\0")] == symbols[0].name.encode("utf-8")
     offset = (raw.index(b"\0") + 4) & ~3
     byteorder = "little" if "little endian" in read("-h", binary) else "big"
     assert int.from_bytes(raw[offset:offset + 4], byteorder) == zlib.crc32(symbols[0].read_bytes())
