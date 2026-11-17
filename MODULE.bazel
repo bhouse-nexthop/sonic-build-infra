@@ -43,7 +43,7 @@ bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.3", dev_dependency = Tr
 
 # The SONiC patch sorts above upstream 0.9.4 without a root override.
 # Share the prepared APT graph across dependency sets in the module lock.
-bazel_dep(name = "rules_distroless", version = "0.9.4.sonic.20")
+bazel_dep(name = "rules_distroless", version = "0.9.4.sonic.21")
 
 # One multiarch directory shared by GCC and Clang on both architectures.
 # Consumers import this same repository through use_extension/use_repo.
@@ -123,6 +123,7 @@ use_repo(
     # Build tools and their runtime dependencies, resolved per architecture.
     "build_tools",
     "image_tools",
+    "bsdtar_tools_debian",
     "initramfs_runtime",
     "manual_tools",
     "base_debug_debian",
@@ -454,6 +455,13 @@ single_version_override(
 )
 
 register_toolchains("//tools/build_tools:gawk_toolchain")
+
+# Execution-side archive actions use locked APT BSDtar. The target_type and
+# explicit GCC/sysroot repository bootstrap tar labels retain their fallbacks.
+register_toolchains(
+    "//tools/build_tools:apt_bsdtar_amd64_toolchain",
+    "//tools/build_tools:apt_bsdtar_arm64_toolchain",
+)
 
 bookworm_bazel_lib_tools = use_extension("@bazel_lib//lib:extensions.bzl", "toolchains")
 use_repo(bookworm_bazel_lib_tools, "coreutils_toolchains", "zstd_toolchains")

@@ -668,3 +668,43 @@ locks.
 
 See [the source CI configuration](../../ci/README.md) for the pinned downloader
 file and the recorded artifacts.
+
+## APT BSDtar archive toolchain
+
+`//tools/build_tools:bsdtar` exports the locked `libarchive-tools` BSDtar program
+and its private execution loader/libraries. The `bsdtar_tools_debian` collection
+selects AMD64 and ARM64 from the shared APT lock. Its ELF runtime preparation
+consumes the original package member archives directly, so preparing the
+archive tool does not depend on an archive action.
+
+The execution toolchains are:
+
+```starlark
+register_toolchains(
+    "@sonic_build_infra//tools/build_tools:apt_bsdtar_amd64_toolchain",
+    "@sonic_build_infra//tools/build_tools:apt_bsdtar_arm64_toolchain",
+)
+```
+
+Infrastructure registers these implementations for
+`@tar.bzl//tar/toolchain:type`. A consuming root that explicitly registers the
+upstream fallback should put the APT registrations first. The upstream
+`target_type` toolchains and the fixed BSDtar labels used during GCC/sysroot
+repository preparation retain their bootstrap roles.
+
+`elf_runtime_tool` exposes an existing ELF-profile entry with a relative
+executable symlink. Its `DefaultInfo.files` contains both the entry and its
+complete runtime TreeArtifact. This serves upstream toolchains that propagate
+ordinary files rather than a binary's runfiles. The entry and runtime follow
+the same configuration; an execution consumer selects the executable with
+`cfg = "exec"`, as `tar_toolchain.binary` does. Thus both execroot and runfiles
+layouts preserve the relative link while an ARM64 target can use AMD64 tools.
+The existing static runtime entry and permitted base shell start the locked
+APT ELF through its private loader.
+
+`//tools/build_tools/bsdtar_tests:bsdtar_test` checks the locked version and
+library file closure, raw archive ownership/modes, escaped and UTF-8 names,
+symlinks, hardlinks, relocated invocation and missing-input failure. It runs in
+the existing native AMD64/ARM64 CI matrix alongside the original source
+installation consumers. These archive checks use uncompressed TARs; compressed
+outputs continue to select their separately declared compressors.

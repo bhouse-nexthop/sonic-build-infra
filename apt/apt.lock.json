@@ -4,7 +4,7 @@
     "notice": "AUTO-GENERATED. DO NOT EDIT MANUALLY."
   },
   "_inputs": {
-    "digest": "dbcfd054f774ad7cd95cc46122f7a1e4a34856b5a7c7b70a5d4ac2c3d4ec9ad6",
+    "digest": "034183f8f10f2f4515e7c7d24fd200f4f2fca8ce6da7d87e0affc3618cd556f8",
     "module_requests_document": {
       "dependency_sets": {
         "base_debian": {
@@ -340,6 +340,18 @@
             "bookworm",
             "bookworm-updates",
             "bookworm-security"
+          ]
+        },
+        "bsdtar_tools_debian": {
+          "include_transitive": true,
+          "packages": [
+            "libarchive-tools:amd64",
+            "libarchive-tools:arm64"
+          ],
+          "suites": [
+            "trixie",
+            "trixie-updates",
+            "trixie-security"
           ]
         },
         "build_tools": {
@@ -3100,6 +3112,18 @@
             "bookworm",
             "bookworm-updates",
             "bookworm-security"
+          ]
+        },
+        "bsdtar_tools_debian": {
+          "include_transitive": true,
+          "packages": [
+            "libarchive-tools:amd64",
+            "libarchive-tools:arm64"
+          ],
+          "suites": [
+            "trixie",
+            "trixie-updates",
+            "trixie-security"
           ]
         },
         "build_tools": {
@@ -7187,6 +7211,16 @@
           "/bookworm/libzstd1:arm64": "1.5.4+dfsg2-5",
           "/bookworm/rpcsvc-proto:arm64": "1.4.3-1",
           "/bookworm/zlib1g:arm64": "1:1.2.13.dfsg-1"
+        }
+      }
+    },
+    "bsdtar_tools_debian": {
+      "sets": {
+        "amd64": {
+          "/trixie/libarchive-tools:amd64": "3.7.4-4+deb13u1"
+        },
+        "arm64": {
+          "/trixie/libarchive-tools:arm64": "3.7.4-4+deb13u1"
         }
       }
     },
@@ -54674,6 +54708,68 @@
       "suite": "trixie",
       "version": "3.0.3"
     },
+    "/trixie/libarchive-tools:amd64=3.7.4-4+deb13u1": {
+      "architecture": "amd64",
+      "depends_on": [
+        "/trixie/gcc-14-base:amd64=14.2.0-19",
+        "/trixie/libacl1:amd64=2.3.2-2+b1",
+        "/trixie/libarchive13t64:amd64=3.7.4-4+deb13u1",
+        "/trixie/libbz2-1.0:amd64=1.0.8-6",
+        "/trixie/libc6:amd64=2.41-12+deb13u3",
+        "/trixie/libgcc-s1:amd64=14.2.0-19",
+        "/trixie/liblz4-1:amd64=1.10.0-4",
+        "/trixie/liblzma5:amd64=5.8.1-1+deb13u1",
+        "/trixie/libnettle8t64:amd64=3.10.1-1",
+        "/trixie/libxml2:amd64=2.12.7+dfsg+really2.9.14-2.1+deb13u3",
+        "/trixie/libxxhash0:amd64=0.8.3-2",
+        "/trixie/libzstd1:amd64=1.5.7+dfsg-1",
+        "/trixie/zlib1g:amd64=1:1.3.dfsg+really1.3.1-1+b1"
+      ],
+      "filename": "pool/main/liba/libarchive/libarchive-tools_3.7.4-4+deb13u1_amd64.deb",
+      "files": [
+        "usr/bin/bsdcat",
+        "usr/bin/bsdcpio",
+        "usr/bin/bsdtar",
+        "usr/bin/bsdunzip"
+      ],
+      "name": "libarchive-tools",
+      "section": "utils",
+      "sha256": "2b5a2e176e77aa2939d9144d3422f5e291f713ec62281a6c9699cd49fdd80e3e",
+      "size": 87620,
+      "suite": "trixie",
+      "version": "3.7.4-4+deb13u1"
+    },
+    "/trixie/libarchive-tools:arm64=3.7.4-4+deb13u1": {
+      "architecture": "arm64",
+      "depends_on": [
+        "/trixie/gcc-14-base:arm64=14.2.0-19",
+        "/trixie/libacl1:arm64=2.3.2-2+b1",
+        "/trixie/libarchive13t64:arm64=3.7.4-4+deb13u1",
+        "/trixie/libbz2-1.0:arm64=1.0.8-6",
+        "/trixie/libc6:arm64=2.41-12+deb13u3",
+        "/trixie/libgcc-s1:arm64=14.2.0-19",
+        "/trixie/liblz4-1:arm64=1.10.0-4",
+        "/trixie/liblzma5:arm64=5.8.1-1+deb13u1",
+        "/trixie/libnettle8t64:arm64=3.10.1-1",
+        "/trixie/libxml2:arm64=2.12.7+dfsg+really2.9.14-2.1+deb13u3",
+        "/trixie/libxxhash0:arm64=0.8.3-2",
+        "/trixie/libzstd1:arm64=1.5.7+dfsg-1",
+        "/trixie/zlib1g:arm64=1:1.3.dfsg+really1.3.1-1+b1"
+      ],
+      "filename": "pool/main/liba/libarchive/libarchive-tools_3.7.4-4+deb13u1_arm64.deb",
+      "files": [
+        "usr/bin/bsdcat",
+        "usr/bin/bsdcpio",
+        "usr/bin/bsdtar",
+        "usr/bin/bsdunzip"
+      ],
+      "name": "libarchive-tools",
+      "section": "utils",
+      "sha256": "9816e0c71811e53c2cd5d4be8e2f0916e9c964204fa5d7b886e0e9b25f91bd36",
+      "size": 85244,
+      "suite": "trixie",
+      "version": "3.7.4-4+deb13u1"
+    },
     "/trixie/libarchive-zip-perl:amd64=1.68-1": {
       "architecture": "all",
       "depends_on": [
@@ -54725,6 +54821,62 @@
       "size": 103940,
       "suite": "trixie",
       "version": "1.68-1"
+    },
+    "/trixie/libarchive13t64:amd64=3.7.4-4+deb13u1": {
+      "architecture": "amd64",
+      "depends_on": [
+        "/trixie/gcc-14-base:amd64=14.2.0-19",
+        "/trixie/libacl1:amd64=2.3.2-2+b1",
+        "/trixie/libbz2-1.0:amd64=1.0.8-6",
+        "/trixie/libc6:amd64=2.41-12+deb13u3",
+        "/trixie/libgcc-s1:amd64=14.2.0-19",
+        "/trixie/liblz4-1:amd64=1.10.0-4",
+        "/trixie/liblzma5:amd64=5.8.1-1+deb13u1",
+        "/trixie/libnettle8t64:amd64=3.10.1-1",
+        "/trixie/libxml2:amd64=2.12.7+dfsg+really2.9.14-2.1+deb13u3",
+        "/trixie/libxxhash0:amd64=0.8.3-2",
+        "/trixie/libzstd1:amd64=1.5.7+dfsg-1",
+        "/trixie/zlib1g:amd64=1:1.3.dfsg+really1.3.1-1+b1"
+      ],
+      "filename": "pool/main/liba/libarchive/libarchive13t64_3.7.4-4+deb13u1_amd64.deb",
+      "files": [
+        "usr/lib/x86_64-linux-gnu/libarchive.so.13",
+        "usr/lib/x86_64-linux-gnu/libarchive.so.13.7.4"
+      ],
+      "name": "libarchive13t64",
+      "section": "libs",
+      "sha256": "12e06195a899e8db371803ed70111fc7302573d3ed84e967d3d48ef2d543ace8",
+      "size": 350192,
+      "suite": "trixie",
+      "version": "3.7.4-4+deb13u1"
+    },
+    "/trixie/libarchive13t64:arm64=3.7.4-4+deb13u1": {
+      "architecture": "arm64",
+      "depends_on": [
+        "/trixie/gcc-14-base:arm64=14.2.0-19",
+        "/trixie/libacl1:arm64=2.3.2-2+b1",
+        "/trixie/libbz2-1.0:arm64=1.0.8-6",
+        "/trixie/libc6:arm64=2.41-12+deb13u3",
+        "/trixie/libgcc-s1:arm64=14.2.0-19",
+        "/trixie/liblz4-1:arm64=1.10.0-4",
+        "/trixie/liblzma5:arm64=5.8.1-1+deb13u1",
+        "/trixie/libnettle8t64:arm64=3.10.1-1",
+        "/trixie/libxml2:arm64=2.12.7+dfsg+really2.9.14-2.1+deb13u3",
+        "/trixie/libxxhash0:arm64=0.8.3-2",
+        "/trixie/libzstd1:arm64=1.5.7+dfsg-1",
+        "/trixie/zlib1g:arm64=1:1.3.dfsg+really1.3.1-1+b1"
+      ],
+      "filename": "pool/main/liba/libarchive/libarchive13t64_3.7.4-4+deb13u1_arm64.deb",
+      "files": [
+        "usr/lib/aarch64-linux-gnu/libarchive.so.13",
+        "usr/lib/aarch64-linux-gnu/libarchive.so.13.7.4"
+      ],
+      "name": "libarchive13t64",
+      "section": "libs",
+      "sha256": "9dc7897bc1c83b03a69c581018010fbd9723ce199b99433639343d8b3a5bcf81",
+      "size": 324064,
+      "suite": "trixie",
+      "version": "3.7.4-4+deb13u1"
     },
     "/trixie/libasan8-arm64-cross:amd64=14.2.0-19cross1": {
       "architecture": "all",
