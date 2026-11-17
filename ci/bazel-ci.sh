@@ -51,6 +51,7 @@ tests=(
   //tools/build_tools/bsdtar_tests:bsdtar_test
   //go:lock_test
   //deb:assemble_test
+  //deb/tests:changelogs_test
   //tests:hello_deb_optional_fields_build_test
   //deps:alternatives_test
   //oci/tests:runtime_packages_test //oci/tests:runtime_packages_rule_test

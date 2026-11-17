@@ -38,3 +38,10 @@ py_library(
 )
 
 exports_files(["elf_metadata.py"], visibility = ["//tools/build_tools:__pkg__"])
+
+py_binary(
+    name = "changelogs_tool",
+    srcs = ["changelogs.py"],
+    main = "changelogs.py",
+    deps = ["//oci:runtime_packages_lib"],
+)
