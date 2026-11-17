@@ -4,7 +4,7 @@
     "notice": "AUTO-GENERATED. DO NOT EDIT MANUALLY."
   },
   "_inputs": {
-    "digest": "62f4cb87ffc617e74c029b3cb521b418fe3017a652511e44742227b3bb6a4bd4",
+    "digest": "c02f07056607032df4d0b5ce65df77edbf769e0ef5ccc99119a29a6e3c67e1a7",
     "module_requests_document": {
       "dependency_sets": {
         "base_debian": {
@@ -1178,14 +1178,20 @@
             "mtools:arm64",
             "openssl:amd64",
             "openssl:arm64",
+            "pigz:amd64",
+            "pigz:arm64",
             "qemu-system-x86:amd64",
             "qemu-utils:amd64",
             "qemu-utils:arm64",
             "seabios:amd64",
+            "shellcheck:amd64",
+            "shellcheck:arm64",
             "squashfs-tools:amd64",
             "squashfs-tools:arm64",
             "tar-split:amd64",
             "tar-split:arm64",
+            "whois:amd64",
+            "whois:arm64",
             "zstd:amd64",
             "zstd:arm64"
           ],
@@ -1822,6 +1828,18 @@
             "strace:amd64 (= 6.13+ds-1)",
             "vim:amd64 (= 2:9.1.1230-2)",
             "zlib1g:amd64 (= 1:1.3.dfsg+really1.3.1-1+b1)"
+          ],
+          "suites": [
+            "trixie",
+            "trixie-updates",
+            "trixie-security"
+          ]
+        },
+        "p4rt_owner_tools_debian": {
+          "include_transitive": true,
+          "packages": [
+            "binutils-gold:amd64",
+            "patchelf:amd64"
           ],
           "suites": [
             "trixie",
@@ -3535,7 +3553,13 @@
             "dash:amd64",
             "dash:arm64",
             "qemu-system-x86:amd64",
-            "seabios:amd64"
+            "seabios:amd64",
+            "pigz:amd64",
+            "pigz:arm64",
+            "whois:amd64",
+            "whois:arm64",
+            "shellcheck:amd64",
+            "shellcheck:arm64"
           ],
           "suites": [
             "trixie",
@@ -4166,6 +4190,18 @@
             "strace:amd64 (= 6.13+ds-1)",
             "vim:amd64 (= 2:9.1.1230-2)",
             "zlib1g:amd64 (= 1:1.3.dfsg+really1.3.1-1+b1)"
+          ],
+          "suites": [
+            "trixie",
+            "trixie-updates",
+            "trixie-security"
+          ]
+        },
+        "p4rt_owner_tools_debian": {
+          "include_transitive": true,
+          "packages": [
+            "binutils-gold:amd64",
+            "patchelf:amd64"
           ],
           "suites": [
             "trixie",
@@ -7211,11 +7247,14 @@
           "/trixie/grub-pc-bin:amd64": "2.12-9+deb13u2",
           "/trixie/kmod:amd64": "34.2-2",
           "/trixie/mtools:amd64": "4.0.48-1",
+          "/trixie/pigz:amd64": "2.8-1",
           "/trixie/qemu-system-x86:amd64": "1:10.0.11+ds-0+deb13u1",
           "/trixie/qemu-utils:amd64": "1:10.0.11+ds-0+deb13u1",
           "/trixie/seabios:amd64": "1.16.3-2",
+          "/trixie/shellcheck:amd64": "0.10.0-1",
           "/trixie/squashfs-tools:amd64": "1:4.6.1-1",
           "/trixie/tar-split:amd64": "0.11.6-1+b5",
+          "/trixie/whois:amd64": "5.6.3",
           "/trixie/zstd:amd64": "1.5.7+dfsg-1"
         },
         "arm64": {
@@ -7230,9 +7269,12 @@
           "/trixie/grub-common:arm64": "2.12-9+deb13u2",
           "/trixie/kmod:arm64": "34.2-2",
           "/trixie/mtools:arm64": "4.0.48-1",
+          "/trixie/pigz:arm64": "2.8-1+b1",
           "/trixie/qemu-utils:arm64": "1:10.0.11+ds-0+deb13u1",
+          "/trixie/shellcheck:arm64": "0.10.0-1",
           "/trixie/squashfs-tools:arm64": "1:4.6.1-1+b1",
           "/trixie/tar-split:arm64": "0.11.6-1+b5",
+          "/trixie/whois:arm64": "5.6.3",
           "/trixie/zstd:arm64": "1.5.7+dfsg-1"
         }
       }
@@ -8108,6 +8150,14 @@
           "/trixie/strace:amd64": "6.13+ds-1",
           "/trixie/vim:amd64": "2:9.1.1230-2",
           "/trixie/zlib1g:amd64": "1:1.3.dfsg+really1.3.1-1+b1"
+        }
+      }
+    },
+    "p4rt_owner_tools_debian": {
+      "sets": {
+        "amd64": {
+          "/trixie/binutils-gold:amd64": "2.44-2",
+          "/trixie/patchelf:amd64": "0.18.0-1.4"
         }
       }
     },
@@ -37100,6 +37150,54 @@
       "size": 2508772,
       "suite": "trixie",
       "version": "2.44-3"
+    },
+    "/trixie/binutils-gold-x86-64-linux-gnu:amd64=2.44-2": {
+      "architecture": "amd64",
+      "depends_on": [
+        "/trixie/gcc-14-base:amd64=14.2.0-19",
+        "/trixie/libc6:amd64=2.41-12+deb13u3",
+        "/trixie/libgcc-s1:amd64=14.2.0-19",
+        "/trixie/libjansson4:amd64=2.14-2+b3",
+        "/trixie/libzstd1:amd64=1.5.7+dfsg-1",
+        "/trixie/zlib1g:amd64=1:1.3.dfsg+really1.3.1-1+b1"
+      ],
+      "filename": "pool/main/b/binutils-gold/binutils-gold-x86-64-linux-gnu_2.44-2_amd64.deb",
+      "files": [
+        "usr/bin/x86_64-linux-gnu-dwp",
+        "usr/bin/x86_64-linux-gnu-gold",
+        "usr/bin/x86_64-linux-gnu-ld.gold"
+      ],
+      "name": "binutils-gold-x86-64-linux-gnu",
+      "section": "devel",
+      "sha256": "822bc2d2ef66db1c568bbab64f77966a234f1e17c3caf2065f3ddf75a2926fb0",
+      "size": 1197356,
+      "suite": "trixie",
+      "version": "2.44-2"
+    },
+    "/trixie/binutils-gold:amd64=2.44-2": {
+      "architecture": "amd64",
+      "depends_on": [
+        "/trixie/binutils-gold-x86-64-linux-gnu:amd64=2.44-2",
+        "/trixie/gcc-14-base:amd64=14.2.0-19",
+        "/trixie/libc6:amd64=2.41-12+deb13u3",
+        "/trixie/libgcc-s1:amd64=14.2.0-19",
+        "/trixie/libjansson4:amd64=2.14-2+b3",
+        "/trixie/libzstd1:amd64=1.5.7+dfsg-1",
+        "/trixie/zlib1g:amd64=1:1.3.dfsg+really1.3.1-1+b1"
+      ],
+      "filename": "pool/main/b/binutils-gold/binutils-gold_2.44-2_amd64.deb",
+      "files": [
+        "usr/bin/dwp",
+        "usr/bin/gold",
+        "usr/bin/ld.gold",
+        "usr/lib/gold-ld/ld"
+      ],
+      "name": "binutils-gold",
+      "section": "devel",
+      "sha256": "73e5c04fac3ec2755793fdcbd405e740887f5acb9d0f7f0362b0dccd3eb22b37",
+      "size": 202224,
+      "suite": "trixie",
+      "version": "2.44-2"
     },
     "/trixie/binutils-x86-64-linux-gnu:amd64=2.44-3": {
       "architecture": "amd64",
@@ -159173,6 +159271,25 @@
       "suite": "trixie",
       "version": "2.8-2"
     },
+    "/trixie/patchelf:amd64=0.18.0-1.4": {
+      "architecture": "amd64",
+      "depends_on": [
+        "/trixie/gcc-14-base:amd64=14.2.0-19",
+        "/trixie/libc6:amd64=2.41-12+deb13u3",
+        "/trixie/libgcc-s1:amd64=14.2.0-19",
+        "/trixie/libstdc++6:amd64=14.2.0-19"
+      ],
+      "filename": "pool/main/p/patchelf/patchelf_0.18.0-1.4_amd64.deb",
+      "files": [
+        "usr/bin/patchelf"
+      ],
+      "name": "patchelf",
+      "section": "utils",
+      "sha256": "1d39a7973504a4a5eb4101293cca142b83055a5a0f94e1d4286ded2563289b92",
+      "size": 99720,
+      "suite": "trixie",
+      "version": "0.18.0-1.4"
+    },
     "/trixie/pci.ids:amd64=0.0~2025.06.09-1": {
       "architecture": "all",
       "control_sha256": "09c40e9a8711a9f9bf60b3cfbda3ae6ddaa9b4d4dc4a2cfd20d27c25f9ab330e",
@@ -161388,6 +161505,35 @@
       "size": 62672,
       "suite": "trixie",
       "version": "2.8-1"
+    },
+    "/trixie/pigz:arm64=2.8-1+b1": {
+      "architecture": "arm64",
+      "depends_on": [
+        "/trixie/dpkg:arm64=1.22.22",
+        "/trixie/gcc-14-base:arm64=14.2.0-19",
+        "/trixie/libacl1:arm64=2.3.2-2+b1",
+        "/trixie/libbz2-1.0:arm64=1.0.8-6",
+        "/trixie/libc6:arm64=2.41-12+deb13u3",
+        "/trixie/libgcc-s1:arm64=14.2.0-19",
+        "/trixie/liblzma5:arm64=5.8.1-1+deb13u1",
+        "/trixie/libmd0:arm64=1.1.0-2+b1",
+        "/trixie/libpcre2-8-0:arm64=10.46-1~deb13u1",
+        "/trixie/libselinux1:arm64=3.8.1-1",
+        "/trixie/libzstd1:arm64=1.5.7+dfsg-1",
+        "/trixie/tar:arm64=1.35+dfsg-3.1",
+        "/trixie/zlib1g:arm64=1:1.3.dfsg+really1.3.1-1+b1"
+      ],
+      "filename": "pool/main/p/pigz/pigz_2.8-1+b1_arm64.deb",
+      "files": [
+        "usr/bin/pigz",
+        "usr/bin/unpigz"
+      ],
+      "name": "pigz",
+      "section": "utils",
+      "sha256": "c0a856c49f9a7eba26977dce80439340aa143bef3db92f4b8278ee5e3ee54a1d",
+      "size": 56276,
+      "suite": "trixie",
+      "version": "2.8-1+b1"
     },
     "/trixie/pkg-config:amd64=1.8.1-4": {
       "architecture": "amd64",
@@ -170596,6 +170742,46 @@
       "suite": "trixie",
       "version": "2.4-5+b2"
     },
+    "/trixie/shellcheck:amd64=0.10.0-1": {
+      "architecture": "amd64",
+      "depends_on": [
+        "/trixie/gcc-14-base:amd64=14.2.0-19",
+        "/trixie/libc6:amd64=2.41-12+deb13u3",
+        "/trixie/libffi8:amd64=3.4.8-2",
+        "/trixie/libgcc-s1:amd64=14.2.0-19",
+        "/trixie/libgmp10:amd64=2:6.3.0+dfsg-3"
+      ],
+      "filename": "pool/main/s/shellcheck/shellcheck_0.10.0-1_amd64.deb",
+      "files": [
+        "usr/bin/shellcheck"
+      ],
+      "name": "shellcheck",
+      "section": "devel",
+      "sha256": "8b207f7d4421a46cec9e377c74d450e1717092b58ae3e7151cd5f85f639065cd",
+      "size": 4907584,
+      "suite": "trixie",
+      "version": "0.10.0-1"
+    },
+    "/trixie/shellcheck:arm64=0.10.0-1": {
+      "architecture": "arm64",
+      "depends_on": [
+        "/trixie/gcc-14-base:arm64=14.2.0-19",
+        "/trixie/libc6:arm64=2.41-12+deb13u3",
+        "/trixie/libffi8:arm64=3.4.8-2",
+        "/trixie/libgcc-s1:arm64=14.2.0-19",
+        "/trixie/libgmp10:arm64=2:6.3.0+dfsg-3"
+      ],
+      "filename": "pool/main/s/shellcheck/shellcheck_0.10.0-1_arm64.deb",
+      "files": [
+        "usr/bin/shellcheck"
+      ],
+      "name": "shellcheck",
+      "section": "devel",
+      "sha256": "35bffb007a2873c76258647b23110bd7ca8032e168918491e0ce37e8c54365d4",
+      "size": 4899184,
+      "suite": "trixie",
+      "version": "0.10.0-1"
+    },
     "/trixie/sphinx-common:amd64=8.1.3-5": {
       "architecture": "all",
       "depends_on": [
@@ -177431,6 +177617,54 @@
       "size": 984500,
       "suite": "trixie",
       "version": "1.25.0-2"
+    },
+    "/trixie/whois:amd64=5.6.3": {
+      "architecture": "amd64",
+      "depends_on": [
+        "/trixie/gcc-14-base:amd64=14.2.0-19",
+        "/trixie/libc6:amd64=2.41-12+deb13u3",
+        "/trixie/libcrypt1:amd64=1:4.4.38-1",
+        "/trixie/libgcc-s1:amd64=14.2.0-19",
+        "/trixie/libidn2-0:amd64=2.3.8-2",
+        "/trixie/libunistring5:amd64=1.3-2"
+      ],
+      "filename": "pool/main/w/whois/whois_5.6.3_amd64.deb",
+      "files": [
+        "usr/bin/mkpasswd",
+        "usr/bin/whois",
+        "usr/share/bash-completion/completions/mkpasswd",
+        "usr/share/bash-completion/completions/whois"
+      ],
+      "name": "whois",
+      "section": "net",
+      "sha256": "6c6637ad159a175f7481c399ee57def5d9fe9e0ab7e098391c0e5d0e55b056ed",
+      "size": 72412,
+      "suite": "trixie",
+      "version": "5.6.3"
+    },
+    "/trixie/whois:arm64=5.6.3": {
+      "architecture": "arm64",
+      "depends_on": [
+        "/trixie/gcc-14-base:arm64=14.2.0-19",
+        "/trixie/libc6:arm64=2.41-12+deb13u3",
+        "/trixie/libcrypt1:arm64=1:4.4.38-1",
+        "/trixie/libgcc-s1:arm64=14.2.0-19",
+        "/trixie/libidn2-0:arm64=2.3.8-2",
+        "/trixie/libunistring5:arm64=1.3-2"
+      ],
+      "filename": "pool/main/w/whois/whois_5.6.3_arm64.deb",
+      "files": [
+        "usr/bin/mkpasswd",
+        "usr/bin/whois",
+        "usr/share/bash-completion/completions/mkpasswd",
+        "usr/share/bash-completion/completions/whois"
+      ],
+      "name": "whois",
+      "section": "net",
+      "sha256": "e119a6b8194999375d382d0425cf933057e76a8608533a493a291d3d4094971b",
+      "size": 70168,
+      "suite": "trixie",
+      "version": "5.6.3"
     },
     "/trixie/x11-common:amd64=1:7.7+24+deb13u1": {
       "architecture": "all",

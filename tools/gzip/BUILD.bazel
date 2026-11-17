@@ -7,7 +7,7 @@ load("@toolchain_utils//toolchain/info:defs.bzl", "toolchain_info")
 command(
     name = "reproducible_gzip",
     arguments = ["--no-name"],
-    command = "@pigz",
+    command = "//tools/build_tools:pigz",
     visibility = ["//visibility:public"],
 )
 

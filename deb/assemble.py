@@ -110,6 +110,18 @@ def summarize(data, architecture):
     return entries, size, ''.join(digest + '  ' + name + '\n' for name, digest in sorted(md5sums))
 
 
+def gzip_tar(command, output, pigz):
+    """Stream the archive once through the declared deterministic gzip tool."""
+    with subprocess.Popen(command, stdout=subprocess.PIPE) as producer:
+        try:
+            with output.open('wb') as destination:
+                subprocess.run([str(pigz), '-n', '-c'], stdin=producer.stdout, stdout=destination, check=True)
+        finally:
+            producer.stdout.close()
+        if producer.wait():
+            raise subprocess.CalledProcessError(producer.returncode, command)
+
+
 def assemble(args):
     fields = fields_from(args.control) if args.control else Deb822(dict(item.split('=', 1) for item in args.field))
     if not args.control:
@@ -162,9 +174,10 @@ def assemble(args):
             os.utime(item, (0, 0))
         os.utime(control, (0, 0))
         # The control archive has Debian-defined ownership; payload owners stay intact.
-        subprocess.run([str(args.tar), '-czf', str(root / 'control.tar.gz'), '--format=pax',
-                        '--uid=0', '--gid=0', '--numeric-owner', '-C', str(control), '.'], check=True)
-        subprocess.run([str(args.tar), '-czf', str(root / 'data.tar.gz'), '--format=pax', '--numeric-owner', '@' + str(data)], check=True)
+        gzip_tar([str(args.tar), '-cf', '-', '--format=pax', '--uid=0', '--gid=0',
+                  '--numeric-owner', '-C', str(control), '.'], root / 'control.tar.gz', args.pigz)
+        gzip_tar([str(args.tar), '-cf', '-', '--format=pax', '--numeric-owner', '@' + str(data)],
+                 root / 'data.tar.gz', args.pigz)
         (root / 'debian-binary').write_bytes(b'2.0\n')
         filename = '{}_{}_{}.deb'.format(fields['Package'], fields['Version'], fields['Architecture'])
         if args.output_dir:
@@ -186,12 +199,14 @@ def main():
     parser.add_argument('--target-architecture', choices=ARCHITECTURES, required=True)
     parser.add_argument('--tar', type=Path, required=True)
     parser.add_argument('--ar', type=Path, required=True)
+    parser.add_argument('--pigz', type=Path, required=True)
     output = parser.add_mutually_exclusive_group(required=True)
     output.add_argument('--output', type=Path)
     output.add_argument('--output-dir', type=Path)
     args = parser.parse_args()
     args.tar = args.tar.resolve()
     args.ar = args.ar.resolve()
+    args.pigz = args.pigz.resolve()
     args.data = args.data.resolve()
     if args.control:
         require(not args.field, 'control and scalar fields are mutually exclusive')

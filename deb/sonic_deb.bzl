@@ -23,6 +23,7 @@ def _assemble(ctx):
     args.add("--target-architecture", ctx.attr.target_architecture)
     args.add("--tar", tar.tarinfo.binary)
     args.add("--ar", ar)
+    args.add("--pigz", ctx.executable._pigz)
     inputs = [ctx.file.data]
     if ctx.file.control:
         output = ctx.actions.declare_directory(ctx.label.name + ".debs")
@@ -43,7 +44,7 @@ def _assemble(ctx):
         args.add("--control-file", name + "=" + files[0].path)
     ctx.actions.run(
         executable = tool,
-        tools = [tool] + tar.default.files.to_list(),
+        tools = [tool, ctx.attr._pigz[DefaultInfo].files_to_run] + tar.default.files.to_list(),
         inputs = depset(inputs, transitive = [cc_toolchain.all_files]),
         outputs = [output],
         arguments = [args],
@@ -66,6 +67,7 @@ _assemble_deb = rule(
         "depends": attr.string_list(),
         "architecture": attr.string(),
         "target_architecture": attr.string(mandatory = True),
+        "_pigz": attr.label(default = Label("//tools/build_tools:pigz"), executable = True, cfg = "exec"),
         "_assembler": attr.label(default = Label("//deb:assemble"), executable = True, cfg = "exec"),
     },
     fragments = ["cpp"],
