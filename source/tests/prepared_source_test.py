@@ -2,7 +2,7 @@
 """Exercise real repository preparation from local archives and tracked labels.
 
 Run with --bazel PATH. These metadata-only consumer queries use native
-filegroups, with no language rules, compiler downloads or host patch commands.
+filegroups, with no language rules, compiler downloads or host patch commands. GNU-specific cases use the locked APT execution tool, with no host PATH lookup.
 
 The contract is an ordered archive/patch chain with tracked label inputs and
 explicit relative series identity. Fixtures independently define the resulting
@@ -51,6 +51,7 @@ class PreparedSourceTest(unittest.TestCase):
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
         shutil.copyfile(SOURCE / "prepared_source.bzl", self.workspace / "prepared_source.bzl")
+        shutil.copyfile(SOURCE / "patch_tools.bzl", self.workspace / "patch_tools.bzl")
         self.build_file = 'exports_files(glob(["**"], exclude = ["BUILD.bazel"]))\n'
         (self.workspace / "source.BUILD.bazel").write_text(self.build_file)
         (self.workspace / "BUILD.bazel").write_text('exports_files(glob(["**"]))\n')
@@ -84,11 +85,15 @@ class PreparedSourceTest(unittest.TestCase):
 
     def query(self, steps=None, error=None):
         actual_steps = self.steps if steps is None else steps
+        gnu = any(step.get("format") == "gnu" for step in actual_steps)
+        tools = ('local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")\n'
+                 'local_repository(name="gnu_patch_tools",path=' + repr(GNU_TOOLS_ROOT) + ')\n') if gnu and GNU_TOOLS_ROOT else ''
+        tool_argument = ', gnu_tools="@gnu_patch_tools//:ROOT"' if gnu and GNU_TOOLS_ROOT else ''
         (self.workspace / "MODULE.bazel").write_text(
-            'module(name = "prepared_source_test")\n'
+            'module(name = "prepared_source_test")\n' + tools +
             'prepared_source = use_repo_rule("//:prepared_source.bzl", "prepared_source")\n'
-            'prepared_source(name = "prepared", build_file = "//:source.BUILD.bazel", inputs = ' + repr(self.inputs) + ', steps = ' + repr([json.dumps(step) for step in actual_steps]) + ')\n')
-        result = subprocess.run(self.command, cwd=self.workspace, capture_output=True, text=True, timeout=60)
+            'prepared_source(name = "prepared", build_file = "//:source.BUILD.bazel", inputs = ' + repr(self.inputs) + ', steps = ' + repr([json.dumps(step) for step in actual_steps]) + tool_argument + ')\n')
+        result = subprocess.run(self.command, cwd=self.workspace, capture_output=True, text=True, timeout=300 if gnu else 60)
         if error:
             self.assertNotEqual(result.returncode, 0, result.stdout)
             if isinstance(error, str):
@@ -97,6 +102,22 @@ class PreparedSourceTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         state = next((self.root / "output/external").glob("*/state.txt"))
         return state.parent
+
+    def test_declared_file_override_preserves_bytes_mode_and_label_changes(self):
+        source = self.archive("file-override.tar.gz", {"state.txt": "alpha\n", "config.sub": "obsolete archive input\n"})
+        self.write_input("config.sub", "#!/bin/sh\necho current-target\n")
+        declared = self.workspace / "inputs/config.sub"
+        declared.chmod(0o755)
+        steps = [source, {"op": "file", "input": "config.sub", "path": "config.sub"}]
+        prepared = self.query(steps)
+        self.assertEqual((prepared / "config.sub").read_bytes(), b"#!/bin/sh\necho current-target\n")
+        self.assertTrue((prepared / "config.sub").is_symlink())
+        self.assertEqual((prepared / "config.sub").stat().st_mode & 0o777, 0o755)
+        self.write_input("config.sub", "#!/bin/sh\necho corrected-target\n")
+        prepared = self.query(steps)
+        self.assertEqual((prepared / "config.sub").read_bytes(), b"#!/bin/sh\necho corrected-target\n")
+        self.assertEqual((prepared / "config.sub").stat().st_mode & 0o777, 0o755)
+        self.query([source, {"op": "file", "input": "config.sub", "path": "../escape"}], error="relative path")
 
     def test_ordered_archives_patch_stages_and_nested_extraction(self):
         prepared = self.query()
@@ -109,6 +130,25 @@ class PreparedSourceTest(unittest.TestCase):
         reordered[2], reordered[3] = reordered[3], reordered[2]
         self.query(reordered, error=True)
         self.assertEqual((self.query() / "state.txt").read_text(), "epsilon\n")
+
+    def test_label_archive_extraction_tracks_input_changes(self):
+        archive = self.workspace / "inputs/nested.tar.gz"
+        archive.write_bytes(archive_bytes({"nested/header.h": "first input bytes\n"}))
+        self.inputs["nested.tar.gz"] = "//:inputs/nested.tar.gz"
+        steps = self.steps[:-1] + [{"op": "extract", "archive_input": "nested.tar.gz", "output": "vendor", "strip_prefix": "nested"}]
+        self.assertEqual((self.query(steps) / "vendor/header.h").read_text(), "first input bytes\n")
+        # Reuse the exact MODULE, label and Bazel output directory. Only the
+        # archive content changes, so a stale repository would keep the first.
+        archive.write_bytes(archive_bytes({"nested/header.h": "changed input bytes\n"}))
+        self.assertEqual((self.query(steps) / "vendor/header.h").read_text(), "changed input bytes\n")
+        self.assertFalse((self.query(steps) / "nested.tar.gz").exists())
+
+    def test_extract_requires_one_declared_archive(self):
+        self.query([{"op": "extract"}], error="exactly one of archive or archive_input")
+        self.query([{"op": "extract", "archive": "vendor.tar.gz", "archive_input": "nested.tar.gz"}], error="exactly one of archive or archive_input")
+        self.query([{"op": "extract", "archive_input": "undeclared.tar.gz"}], error="source input is not declared")
+        self.inputs["missing.tar.gz"] = "//:inputs/missing.tar.gz"
+        self.query([{"op": "extract", "archive_input": "missing.tar.gz"}], error=True)
 
     def test_declared_patch_series_and_build_changes_invalidate_repository(self):
         self.assertEqual((self.query() / "state.txt").read_text(), "epsilon\n")
@@ -196,7 +236,27 @@ class PreparedSourceTest(unittest.TestCase):
         steps[0] = self.archive("scratch-collision.tar.gz", {"state.txt": "alpha\n", ".prepared_source_unified_patch": "source data\n"})
         self.query(steps, error="conflicts with reserved patch scratch path")
         self.write_input("local/series", "# empty series\n")
-        self.query([source, {"op": "patch_series", "series_input": "local/series", "patch_inputs": [], "format": "unknown"}], error="patch format must be native or unified")
+        self.query([source, {"op": "patch_series", "series_input": "local/series", "patch_inputs": [], "format": "unknown"}], error="patch format must be native, unified or gnu")
+
+    def test_declared_gnu_context_limit_and_real_file_changes(self):
+        if not GNU_TOOLS_ROOT:
+            self.skipTest("Pass the declared APT patch tool root with --gnu-tools-root")
+        # GNU patch's explicitly selected fuzz=1 may ignore the outer RCS
+        # context, while the changed line and remaining context still match.
+        source = self.archive("gnu-source.tar.gz", {"state.txt": "# $Id$\nanchor\nalpha\ntail\nend\n"})
+        self.write_input("gnu.patch", "--- a/state.txt\n+++ b/state.txt\n@@ -1,5 +1,5 @@\n # $Id: historic $\n anchor\n-alpha\n+beta\n tail\n end\n")
+        step = {"op": "patch", "input": "gnu.patch", "format": "gnu", "fuzz": 1}
+        self.query([source, dict(step, fuzz=0)], error="Declared GNU patch step failed")
+        result = self.query([source, step])
+        self.assertEqual((result / "state.txt").read_text(), "# $Id$\nanchor\nbeta\ntail\nend\n")
+        self.write_input("gnu.patch", "--- a/state.txt\n+++ b/state.txt\n@@ -1,5 +1,5 @@\n # $Id: historic $\n anchor\n-missing-code\n+beta\n tail\n end\n")
+        self.query([source, step], error="Declared GNU patch step failed")
+
+    def test_gnu_parameters_cannot_change_native_matching(self):
+        source = self.archive("parameter-source.tar.gz", {"state.txt": "alpha\n"})
+        for step in ({"op": "patch", "input": "framing.patch", "fuzz": 1},
+                     {"op": "patch", "input": "framing.patch", "format": "gnu", "fuzz": -1}):
+            self.query([source, step], error="fuzz must be a nonnegative integer")
 
     def test_reject_unknown_operations_keys_unsafe_paths_and_series_options(self):
         invalid = [
@@ -221,6 +281,8 @@ class PreparedSourceTest(unittest.TestCase):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bazel", default="bazel")
+    parser.add_argument("--gnu-tools-root", type=Path, help="Read-only ROOT repository produced by patch_tools_repository")
     options, remaining = parser.parse_known_args()
+    GNU_TOOLS_ROOT = str(options.gnu_tools_root.resolve()) if options.gnu_tools_root else None
     BAZEL = str(Path(shutil.which(options.bazel) or options.bazel).resolve())
     unittest.main(argv=[sys.argv[0], *remaining])
