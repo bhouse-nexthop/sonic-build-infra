@@ -4,8 +4,8 @@ load("@rules_python//python:py_test.bzl", "py_test")
 load("@sonic_wheel_pip//:requirements.bzl", "requirement")
 load("//python:site_packages.bzl", "site_packages")
 load("//python:source_package.bzl", "python_runtime_packages")
-load(":site_packages_contract.bzl", "demo_targets")
 load(":inherited_runtime_fixture.bzl", "inherited_runtime_fixture")
+load(":site_packages_contract.bzl", "demo_targets")
 
 package(default_testonly = True)
 
@@ -14,7 +14,10 @@ demo_targets(name = "demo")
 write_file(
     name = "generated_data",
     out = "site_demo/generated.txt",
-    content = ["generated package data", ""],
+    content = [
+        "generated package data",
+        "",
+    ],
 )
 
 py_library(
@@ -23,7 +26,10 @@ py_library(
         "site_demo/__init__.py",
         "site_demo/cli.py",
     ],
-    data = ["site_demo/default.json", ":generated_data"],
+    data = [
+        "site_demo/default.json",
+        ":generated_data",
+    ],
     imports = ["."],
 )
 
@@ -68,10 +74,74 @@ filegroup(
     output_group = "metadata",
 )
 
+write_file(
+    name = "raw_source_script",
+    out = "source-script.py",
+    content = [
+        "#!/usr/bin/env python3",
+        "print('script payload')",
+        "",
+    ],
+)
+
+write_file(
+    name = "plain_source_script",
+    out = "plain-script.py",
+    content = [
+        "import ipaddress",
+        "",
+    ],
+)
+
+site_packages(
+    name = "normalized_script",
+    data_prefix = "/fixture",
+    distribution = "script-fixture",
+    executable_files = [
+        "script_fixture-1.0.data/scripts/helper",
+        "script_fixture-1.0.data/scripts/plain.py",
+    ],
+    files = {
+        ":raw_source_script": "script_fixture-1.0.data/scripts/helper",
+        ":plain_source_script": "script_fixture-1.0.data/scripts/plain.py",
+    },
+    headers = "/fixture/include",
+    interpreter = "/selected/python3.13",
+    normalize_scripts = True,
+    regular_file_mode = "0644",
+    scripts = "/fixture/bin",
+    site_packages = "/fixture/site",
+    version = "1.0",
+)
+
+site_packages(
+    name = "preserved_script",
+    data_prefix = "/fixture",
+    distribution = "script-fixture",
+    executable_files = [
+        "script_fixture-1.0.data/scripts/helper",
+        "script_fixture-1.0.data/scripts/plain.py",
+    ],
+    files = {
+        ":raw_source_script": "script_fixture-1.0.data/scripts/helper",
+        ":plain_source_script": "script_fixture-1.0.data/scripts/plain.py",
+    },
+    headers = "/fixture/include",
+    interpreter = "/unselected/python3",
+    regular_file_mode = "0644",
+    scripts = "/fixture/bin",
+    site_packages = "/fixture/site",
+    version = "1.0",
+)
+
 py_test(
     name = "site_packages_test",
     srcs = ["site_packages_test.py"],
     args = [
+        "--normalized-script=$(rootpath :normalized_script)",
+        "--preserved-script=$(rootpath :preserved_script)",
+        "--raw-script=$(rootpath :raw_source_script)",
+        "--plain-script=$(rootpath :plain_source_script)",
         "--demo",
         "$(location :demo)",
         "--wheel",
@@ -86,6 +156,10 @@ py_test(
         ":demo_wheel",
         ":image_metadata",
         ":image_packages",
+        ":normalized_script",
+        ":plain_source_script",
+        ":preserved_script",
+        ":raw_source_script",
     ],
     python_version = "3.11",
 )

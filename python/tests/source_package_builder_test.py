@@ -1,5 +1,8 @@
 """Direct-install contract: explicit payload, target paths, tags and metadata."""
 from email.parser import BytesParser
+import base64
+import csv
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -83,6 +86,47 @@ class SourcePackageTest(unittest.TestCase):
         for path in ("missing.py", "../escape", "/absolute"):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 PackageSource(self.spec(executable_files=[path]))
+
+    def test_explicit_script_normalization_uses_target_interpreter_and_updates_record(self):
+        # Setuptools/wheel's Python marker is interpreted at install time.
+        # The source policy is explicit; modules, shell and no-shebang scripts
+        # preserve their bytes, and RECORD must describe the installed content.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payloads = {
+                "helper": b"#!/usr/bin/env python3\nprint('declared body')\n",
+                "ldap.py": b"import ipaddress\n",
+                "shell": b"#!/bin/sh\necho declared\n",
+            }
+            inputs = []
+            scripts = []
+            for name, contents in payloads.items():
+                path = root / name
+                path.write_bytes(contents)
+                scripts.append("native_demo-3.1.data/scripts/" + name)
+                inputs.append({"source": str(path), "path": scripts[-1]})
+            module = root / "module.py"
+            module.write_bytes(payloads["helper"])
+            inputs.append({"source": str(module), "path": "native_demo/module.py"})
+            for enabled in (False, True):
+                for index, interpreter in enumerate(("/usr/bin/python3", "/target/python3.13")):
+                    with self.subTest(normalize_scripts=enabled, interpreter=interpreter):
+                        destination = root / (str(enabled) + str(index))
+                        build_installation(self.spec(files=inputs, regular_file_mode="0644",
+                            executable_files=scripts, normalize_scripts=enabled, interpreter=interpreter),
+                            destination, root / "mtree", root / "runtime")
+                        record = destination / "different/site/native_demo-3.1.dist-info/RECORD"
+                        with record.open(newline="") as source:
+                            entries = {row[0]: row[1:] for row in csv.reader(source)}
+                        for name, original in payloads.items():
+                            expected = (b"#!" + interpreter.encode() + b"\n" + original.split(b"\n", 1)[1]
+                                        if enabled and name == "helper" else original)
+                            installed = destination / "different/bin" / name
+                            self.assertEqual(installed.read_bytes(), expected)
+                            self.assertEqual(installed.stat().st_mode & 0o777, 0o755)
+                            digest = base64.urlsafe_b64encode(hashlib.sha256(expected).digest()).rstrip(b"=").decode()
+                            self.assertEqual(entries["../bin/" + name], ["sha256=" + digest, str(len(expected))])
+                        self.assertEqual((destination / "different/site/native_demo/module.py").read_bytes(), payloads["helper"])
 
     def test_license_file_metadata_version_and_required_payload(self):
         self.assertEqual(BytesParser().parsebytes(PackageSource(self.spec()).generated["METADATA"])["Metadata-Version"], "2.1")

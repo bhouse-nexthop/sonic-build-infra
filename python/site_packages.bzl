@@ -87,7 +87,9 @@ def site_packages(name, srcs = [], distribution = None, version = None, files = 
     With distribution/version, files maps single-file labels to package-relative
     paths (including resources, extensions and .data schemes). regular_file_mode
     optionally fixes declared payload files to 0644 or 0755; generated entry points
-    remain executable. An empty value preserves the input executable status. Metadata attributes
+    remain executable. An empty value preserves the input executable status. normalize_scripts
+    optionally normalizes Python shebangs only in this distribution's .data/scripts;
+    installation then selects the declared interpreter. It defaults to False. Metadata attributes
     use the supported py_wheel names and may share a component declaration. runtime_deps links
     other source distributions; it never adds their files to this package's TAR.
     Calls without distribution retain the legacy PyInfo source aggregation API.
