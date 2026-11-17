@@ -7,7 +7,8 @@
         "armhf"
       ],
       "components": [
-        "main"
+        "main",
+        "non-free-firmware"
       ],
       "suites": [
         "trixie",
@@ -62,6 +63,25 @@
       ],
       "uris": [
         "https://snapshot.debian.org/archive/debian-security/20260726T121236Z"
+      ]
+    },
+    {
+      "origin": "docker",
+      "suite_keys": {
+        "trixie": "docker-trixie"
+      },
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "components": [
+        "stable"
+      ],
+      "suites": [
+        "trixie"
+      ],
+      "uris": [
+        "https://download.docker.com/linux/debian"
       ]
     }
   ],

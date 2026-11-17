@@ -285,5 +285,88 @@ class LockContractTest(unittest.TestCase):
         lock.check_lock(result, sources, requests, "fixture-resolver")
 
 
+class CollectionVersionContractTest(unittest.TestCase):
+    def test_single_collection_rejects_conflicting_transitive_version(self):
+        document = graph()
+        document["packages"]["/stable/helper:amd64=1"] = package("helper", "1")
+        document["dependency_sets"]["runtime"]["sets"]["amd64"]["/stable/helper:amd64"] = "1"
+        with self.assertRaisesRegex(ValueError, "two versions or origins of helper"):
+            lock.validate_lock(document)
+        with self.assertRaisesRegex(ValueError, "two versions or origins of helper"):
+            lock.finalize_result(document, graph(), source_document(), request_document(), "fixture")
+
+    def test_cross_architecture_dependency_keeps_its_own_binary_identity(self):
+        document = graph()
+        foreign = "/stable/helper:arm64=2"
+        document["packages"][foreign] = package("helper", "2", "arm64")
+        document["packages"]["/stable/demo:amd64=1"]["depends_on"].append(foreign)
+        lock.validate_lock(document)
+
+    def test_same_architecture_conflicting_origin_is_rejected(self):
+        document = graph()
+        document["sources"]["vendor"] = deepcopy(document["sources"]["stable"])
+        foreign = "/vendor/helper:amd64=2"
+        document["packages"][foreign] = dict(package("helper", "2"), suite="vendor")
+        document["packages"]["/stable/demo:amd64=1"]["depends_on"].append(foreign)
+        with self.assertRaisesRegex(ValueError, "two versions or origins of helper"):
+            lock.validate_lock(document)
+
+    def test_architecture_all_aliases_are_one_actual_package(self):
+        document = graph()
+        universal = package("helper", "2", "all")
+        document["packages"]["/stable/helper:amd64=2"] = universal
+        alias = "/stable/helper:arm64=2"
+        document["packages"][alias] = deepcopy(universal)
+        document["packages"]["/stable/demo:amd64=1"]["depends_on"].append(alias)
+        lock.validate_lock(document)
+
+    def test_architecture_all_conflicts_with_native_binary(self):
+        document = graph()
+        universal = "/stable/helper:all=2"
+        document["packages"][universal] = package("helper", "2", "all")
+        document["packages"]["/stable/demo:amd64=1"]["depends_on"].append(universal)
+        with self.assertRaisesRegex(ValueError, "two versions or origins of helper"):
+            lock.validate_lock(document)
+
+    def test_independent_collections_can_keep_distinct_versions(self):
+        document = graph()
+        document["packages"]["/stable/helper:amd64=1"] = package("helper", "1")
+        document["dependency_sets"]["other"] = {"sets": {"amd64": {"/stable/helper:amd64": "1"}}}
+        lock.validate_lock(document)
+
+
+class NamedOriginContractTest(unittest.TestCase):
+    def sources(self):
+        return {"version": 1, "sources": [
+            {"uris": ["https://debian.example"], "suites": ["trixie"], "components": ["main"], "architectures": ["amd64"]},
+            {"origin": "docker", "suite_keys": {"trixie": "docker-trixie"}, "uris": ["https://docker.example"], "suites": ["trixie"], "components": ["stable"], "architectures": ["amd64"]},
+        ]}
+
+    def test_same_actual_suite_retains_independent_download_origins(self):
+        records = lock.source_records(self.sources())
+        self.assertEqual(records["trixie"], {"uris": ["https://debian.example"], "components": ["main"], "architectures": ["amd64"], "types": []})
+        self.assertEqual(records["docker-trixie"]["suite"], "trixie")
+        self.assertEqual(records["docker-trixie"]["origin"], "docker")
+        self.assertEqual(records["docker-trixie"]["uris"], ["https://docker.example"])
+
+    def test_explicit_suite_mapping_drives_joint_resolution(self):
+        requests = {"version": 1, "dependency_sets": {"host": {"packages": ["docker-ce:amd64 (= 5:28.5.2-1~debian.13~trixie)"], "suites": ["trixie", "docker-trixie"]}}}
+        partitions = lock.resolution_partitions(self.sources(), requests)
+        self.assertEqual(len(partitions), 1)
+        self.assertEqual(partitions[0][1], self.sources())
+        self.assertEqual(partitions[0][2], requests)
+
+    def test_colliding_logical_key_fails(self):
+        document = self.sources()
+        document["sources"][1]["suite_keys"]["trixie"] = "trixie"
+        with self.assertRaisesRegex(ValueError, "conflicting source"):
+            lock.source_records(document)
+
+    def test_mapping_requires_actual_suite_and_named_origin(self):
+        for aliases, origin in [({"bookworm": "vendor"}, "docker"), ({"trixie": "vendor"}, "")]:
+            document = self.sources(); document["sources"][1].update(suite_keys=aliases, origin=origin)
+            with self.assertRaises(ValueError): lock.source_records(document)
+
+
 if __name__ == "__main__":
     unittest.main()
