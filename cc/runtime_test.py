@@ -16,6 +16,33 @@ import elf_metadata
 from elf_metadata import Elf
 
 
+def wait_for_command(command, **kwargs):
+    """Keep a native tool's signal lifecycle across the preparation processes."""
+    child = None
+    pending = []
+
+    def forward(signum, frame):
+        if child is None:
+            pending.append(signum)
+        else:
+            try:
+                child.send_signal(signum)
+            except ProcessLookupError:
+                pass
+
+    previous = {}
+    try:
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM):
+            previous[signum] = signal.signal(signum, forward)
+        child = subprocess.Popen(command, **kwargs)
+        for signum in pending:
+            forward(signum, None)
+        return child.wait()
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
 def origin_paths(elf, directory):
     paths = {15: [], 29: []}
     has_runpath = False
@@ -121,7 +148,7 @@ def run(binary, payloads, arguments, instrument=None, instrument_arguments=(), *
             command = [str(Path(instrument).absolute())] + list(instrument_arguments) + command
         # Preserve the caller directory while avoiding posix_spawn EFAULT with
         # large environments when native Python executes under PRoot.
-        return subprocess.run(command, env=environment, cwd=os.getcwd()).returncode
+        return wait_for_command(command, env=environment, cwd=os.getcwd())
 
 
 def prepare_native(python, binary, payloads, arguments, target_machine,
@@ -160,7 +187,7 @@ def prepare_native(python, binary, payloads, arguments, target_machine,
             command += ["--instrument", str(instrument)]
         command += ["--instrument-arg=" + value for value in instrument_arguments]
         command += ["--", *arguments]
-        return subprocess.run(command, env=startup, pass_fds=(descriptor,)).returncode
+        return wait_for_command(command, env=startup, pass_fds=(descriptor,))
 
 
 def main():

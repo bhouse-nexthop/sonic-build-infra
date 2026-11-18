@@ -100,3 +100,18 @@ py_test(
     data = [":origin_program", ":liborigin_middle.so", ":liborigin_leaf.so", "@patchelf//:patchelf", "@build_tools//libc6:data"],
     deps = ["//deb:elf_metadata"],
 )
+
+cc_binary(name = "signal_wait", srcs = ["signal_wait.c"])
+
+native_runtime_binary(
+    name = "signal_wrapped",
+    binary = ":signal_wait",
+    runtime_payloads = ["@build_tools//libc6:data"],
+)
+
+py_test(
+    name = "signal_contract_test",
+    srcs = ["signal_contract_test.py"],
+    args = ["$(location :signal_wrapped)"],
+    data = [":signal_wrapped"],
+)
