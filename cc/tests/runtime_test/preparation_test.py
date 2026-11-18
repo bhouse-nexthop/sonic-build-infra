@@ -79,12 +79,12 @@ class RuntimePreparationTest(unittest.TestCase):
             self.assertEqual(Elf(Path(command[4]).read_bytes()).machine, 183)
             self.assertEqual(command[1:3], ["--inhibit-cache", "--library-path"])
             self.assertEqual(command[-2:], ["--meaning", "42"])
-            return SimpleNamespace(returncode=0)
-        with patch.object(runtime.subprocess, "run", side_effect=observe):
+            return 0
+        with patch.object(runtime, "wait_for_command", side_effect=observe):
             self.assertEqual(runtime.run(self.binary, [self.payload], ["--meaning", "42"], target_machine=183), 0)
 
     def test_wrong_declared_target_rejected_before_execution(self):
-        with patch.object(runtime.subprocess, "run") as child:
+        with patch.object(runtime, "wait_for_command") as child:
             with self.assertRaisesRegex(ValueError, "declared target CPU"):
                 runtime.run(self.binary, [self.payload], [], target_machine=62)
         child.assert_not_called()
@@ -112,7 +112,7 @@ class RuntimePreparationTest(unittest.TestCase):
 
     def test_target_environment_copy_does_not_mutate_input(self):
         original = {"PYTHONHOME": "", "EMPTY": "", "LD_PRELOAD": "discard", "LD_DEBUG": "keep"}
-        with patch.object(runtime.subprocess, "run", return_value=SimpleNamespace(returncode=17)) as child:
+        with patch.object(runtime, "wait_for_command", return_value=17) as child:
             self.assertEqual(runtime.run(self.binary, [self.payload], [], target_machine=183, environment=original), 17)
         self.assertEqual(child.call_args.kwargs["env"], {"PYTHONHOME": "", "EMPTY": "", "LD_DEBUG": "keep"})
         self.assertEqual(original["LD_PRELOAD"], "discard")
@@ -211,10 +211,10 @@ pathlib.Path(output).write_text(json.dumps({'environment': {k: os.environ[k] for
             with os.fdopen(os.dup(descriptor), encoding="utf-8") as stream:
                 self.assertEqual(json.load(stream), environment)
             self.assertNotIn(environment["TOKEN"], command)
-            return SimpleNamespace(returncode=0)
+            return 0
 
         environment = {"TOKEN": "fixture-transport-only", "EMPTY": "", "UNICODE": "Főtanúsítvány", "BIG": "x" * 70000}
-        with patch.dict(os.environ, environment, clear=True), patch.object(runtime.json, "dump", side_effect=write), patch.object(runtime.subprocess, "run", side_effect=execute):
+        with patch.dict(os.environ, environment, clear=True), patch.object(runtime.json, "dump", side_effect=write), patch.object(runtime, "wait_for_command", side_effect=execute):
             self.assertEqual(runtime.prepare_native("unused", self.binary, [], [], 183), 0)
         with self.assertRaises(OSError):
             os.fstat(observed[0])
@@ -285,12 +285,12 @@ raise SystemExit(runtime.prepare_native(sys.argv[3], sys.argv[4], [], [], 183))
             return real_dump(value, stream, **kwargs)
 
         factory = tempfile.TemporaryFile
-        with patch.object(tempfile, "_O_TMPFILE_WORKS", False), patch.object(runtime.tempfile, "TemporaryFile", side_effect=lambda **kwargs: factory(dir=self.root, prefix="transport-", **kwargs)), patch.object(runtime.json, "dump", side_effect=write), patch.object(runtime.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
+        with patch.object(tempfile, "_O_TMPFILE_WORKS", False), patch.object(runtime.tempfile, "TemporaryFile", side_effect=lambda **kwargs: factory(dir=self.root, prefix="transport-", **kwargs)), patch.object(runtime.json, "dump", side_effect=write), patch.object(runtime, "wait_for_command", return_value=0):
             self.assertEqual(runtime.prepare_native("unused", self.binary, [], [], 183), 0)
 
     def test_linked_transport_is_rejected_before_write_or_child(self):
         named = self.root / "should-remain-empty"
-        with named.open("w+", encoding="utf-8") as stream, patch.object(runtime.tempfile, "TemporaryFile", return_value=stream), patch.object(runtime.json, "dump") as write, patch.object(runtime.subprocess, "run") as child:
+        with named.open("w+", encoding="utf-8") as stream, patch.object(runtime.tempfile, "TemporaryFile", return_value=stream), patch.object(runtime.json, "dump") as write, patch.object(runtime, "wait_for_command") as child:
             with self.assertRaisesRegex(RuntimeError, "unlinked before writing"):
                 runtime.prepare_native("unused", self.binary, [], [], 183)
         write.assert_not_called()
@@ -300,7 +300,7 @@ raise SystemExit(runtime.prepare_native(sys.argv[3], sys.argv[4], [], [], 183))
 
     def test_serialization_failure_closes_transport(self):
         before = set(os.listdir("/proc/self/fd"))
-        with patch.object(runtime.json, "dump", side_effect=OSError("fixture write failure")), patch.object(runtime.subprocess, "run") as child:
+        with patch.object(runtime.json, "dump", side_effect=OSError("fixture write failure")), patch.object(runtime, "wait_for_command") as child:
             with self.assertRaisesRegex(OSError, "fixture write failure"):
                 runtime.prepare_native("unused", self.binary, [], [], 183)
         child.assert_not_called()

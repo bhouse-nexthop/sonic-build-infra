@@ -133,6 +133,7 @@ tests=(
   //cc/tests/runtime_test:native_test
   //cc/tests/runtime_test:preparation_test
   //cc/tests/runtime_test:contract_test
+  //cc/tests/runtime_test:signal_contract_test
   //cc/tests/runtime_test:origin_contract_test
   //testing:exec_test_args_test
   //tests:hello_rpath_installation_test
