@@ -364,6 +364,7 @@
         "gzip:arm64",
         "iproute2:amd64",
         "iptables:amd64",
+        "iptables:arm64",
         "j2cli:amd64 (= 0.3.12b-5)",
         "jq:amd64",
         "kernel-wedge:amd64",
