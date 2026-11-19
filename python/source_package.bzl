@@ -1,7 +1,7 @@
 """Direct Python installation and runtime dependency handoff."""
 
 PythonRuntimeInfo = provider(doc = "Python distribution installation payloads and runtime requirements.", fields = {
-    "packages": "Transitive depset of structs pairing distribution/version, TAR and metadata.",
+    "packages": "Transitive depset of structs with producer, tar and metadata. Metadata contains distribution/version; direct-source declarations also expose them as struct fields, while wheel installs expose the selected wheel file.",
     "tars": "Transitive installation TAR files, suitable for OCI tars.",
     "metadata": "Transitive runtime JSON files, for image dependency validation.",
 })

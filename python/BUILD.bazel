@@ -69,7 +69,7 @@ py_binary(
     srcs = ["wheel_layer_builder.py"],
     python_version = "3.11",
     visibility = ["//visibility:public"],
-    deps = [requirement("installer")],
+    deps = [requirement("installer"), requirement("packaging")],
 )
 
 py_test(
@@ -80,7 +80,7 @@ py_test(
     ],
     imports = ["."],
     python_version = "3.11",
-    deps = [requirement("installer")],
+    deps = [":runtime_lock_lib", requirement("installer"), requirement("packaging")],
 )
 
 py_binary(
@@ -92,7 +92,7 @@ py_binary(
     imports = ["."],
     main = "source_package_builder.py",
     python_version = "3.11",
-    deps = [requirement("installer")],
+    deps = [requirement("installer"), requirement("packaging")],
 )
 
 py_library(
@@ -103,7 +103,7 @@ py_library(
     ],
     imports = ["."],
     visibility = ["//visibility:public"],
-    deps = [requirement("installer")],
+    deps = [requirement("installer"), requirement("packaging")],
 )
 
 py_library(

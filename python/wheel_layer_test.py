@@ -2,6 +2,7 @@ import base64
 import csv
 import hashlib
 import io
+import json
 from pathlib import Path
 import tarfile
 import tempfile
@@ -9,6 +10,7 @@ import unittest
 import zipfile
 
 from wheel_layer_builder import build_layer
+import runtime_lock
 
 
 class WheelLayerTest(unittest.TestCase):
@@ -17,15 +19,16 @@ class WheelLayerTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def wheel(self, additions=None):
+    def wheel(self, additions=None, name="sample", version="1.0"):
+        stem = name + "-" + version
         files = {
-            "sample/__init__.py": b"value = 42\n",
-            "sample/data.json": b'{"example": true}\n',
-            "sample-1.0.dist-info/METADATA": b"Metadata-Version: 2.1\nName: sample\nVersion: 1.0\n",
-            "sample-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-            "sample-1.0.dist-info/entry_points.txt": b"[console_scripts]\nsample = sample.cli:main\n",
-            "sample-1.0.data/scripts/helper": b"#!python\nprint('helper')\n",
-            "sample-1.0.data/data/share/sample/example.txt": b"shared data\n",
+            name + "/__init__.py": b"value = 42\n",
+            name + "/data.json": b'{"example": true}\n',
+            stem + ".dist-info/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode(),
+            stem + ".dist-info/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            stem + ".dist-info/entry_points.txt": f"[console_scripts]\n{name} = {name}.cli:main\n".encode(),
+            stem + ".data/scripts/" + ("helper" if name == "sample" else name + "_helper"): b"#!python\nprint('helper')\n",
+            stem + ".data/data/share/" + name + "/example.txt": b"shared data\n",
         }
         files.update(additions or {})
         records = io.StringIO()
@@ -33,9 +36,9 @@ class WheelLayerTest(unittest.TestCase):
         for name, content in sorted(files.items()):
             hash_ = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=").decode()
             writer.writerow([name, "sha256=" + hash_, len(content)])
-        writer.writerow(["sample-1.0.dist-info/RECORD", "", ""])
-        files["sample-1.0.dist-info/RECORD"] = records.getvalue().encode()
-        path = self.root / "sample-1.0-py3-none-any.whl"
+        writer.writerow([stem + ".dist-info/RECORD", "", ""])
+        files[stem + ".dist-info/RECORD"] = records.getvalue().encode()
+        path = self.root / (stem + "-py3-none-any.whl")
         with zipfile.ZipFile(path, "w") as archive:
             for name, content in files.items():
                 info = zipfile.ZipInfo(name)
@@ -91,6 +94,9 @@ class WheelLayerTest(unittest.TestCase):
                 archive.writestr(name, content)
         with self.assertRaises(ValueError):
             self.layer([wheel])
+        with self.assertRaises(ValueError):
+            self.installed_with_metadata([wheel])
+        self.assertFalse((self.root / "source0.json").exists())
 
     def test_path_traversal_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -99,6 +105,120 @@ class WheelLayerTest(unittest.TestCase):
     def test_entrypoint_path_traversal_is_rejected(self):
         with self.assertRaises(ValueError):
             self.layer([self.wheel({"sample-1.0.dist-info/entry_points.txt": b"[console_scripts]\n../../escape = sample:main\n"})])
+
+    def installed_with_metadata(self, wheels, prefix="source"):
+        tar = self.root / (prefix + ".tar")
+        outputs = [self.root / (prefix + str(index) + ".json") for index in range(len(wheels))]
+        build_layer(wheels, tar, "/usr/local/lib/python3.13/dist-packages",
+                    "/usr/local/bin", "/usr/local/include", "/usr/local", "/usr/bin/python3",
+                    metadata_outputs=outputs)
+        return tar, outputs
+
+    def plan(self, metadata, roots):
+        return runtime_lock.make_plan({
+            "roots": roots, "python_version": "3.13", "python_platform": "x86_64-unknown-linux-gnu",
+            "uv_version": "0.12.18", "index_urls": [], "find_links": [], "no_index": True,
+            "marker_environment": {}, "source_distributions": roots,
+            "site_packages": ["/usr/local/lib/python3.13/dist-packages"], "constraints": [],
+            "metadata": [{"path": str(path), "producer": "//:owner_wheels"} for path in metadata],
+        })
+
+    def test_metadata_and_tar_come_from_identical_validated_wheel(self):
+        metadata = (b"Metadata-Version: 2.1\nName: sample\nVersion: 1.0\nRequires-Python: >=3.11\n"
+                    b"Requires-Dist: leaf>=2; python_version >= '3.12'\n"
+                    b"Requires-Dist: metrics>=4; extra == 'metrics'\nProvides-Extra: metrics\n\n")
+        wheel = self.wheel({"sample-1.0.dist-info/METADATA": metadata})
+        archive, outputs = self.installed_with_metadata([wheel])
+        record = json.loads(outputs[0].read_text())
+        self.assertEqual(record["distribution"], "sample")
+        self.assertEqual(record["version"], "1.0")
+        self.assertEqual(record["requires_python"], ">=3.11")
+        self.assertEqual(record["extras"], ["metrics"])
+        self.assertEqual(record["wheel"], {
+            "filename": wheel.name, "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+            "metadata_sha256": hashlib.sha256(metadata).hexdigest(), "tags": ["py3-none-any"],
+        })
+        plan = self.plan(outputs, ["sample[metrics]"])
+        self.assertEqual(plan["external_requirements"], ["leaf>=2", "metrics>=4"])
+        with tarfile.open(archive) as installed:
+            self.assertEqual(installed.extractfile(
+                "./usr/local/lib/python3.13/dist-packages/sample-1.0.dist-info/METADATA").read(), metadata)
+        self.assertEqual(archive.read_bytes(), self.layer([wheel], "legacy.tar").read_bytes())
+
+    def test_multiple_source_wheels_and_locked_external_classification(self):
+        wheel = self.wheel({"sample-1.0.dist-info/METADATA":
+                            b"Metadata-Version: 2.1\nName: sample\nVersion: 1.0\nRequires-Dist: common>=1\n"})
+        common = self.wheel({"common-1.0.dist-info/METADATA":
+                             b"Metadata-Version: 2.1\nName: common\nVersion: 1.0\nRequires-Dist: external>=2\n"},
+                            name="common")
+        source_tar, outputs = self.installed_with_metadata([wheel, common])
+        plan = self.plan(outputs, ["sample"])
+        self.assertEqual(plan["selected_sources"], ["common", "sample"])
+        self.assertEqual(plan["external_requirements"], ["external>=2"])
+        external_tar, _ = self.installed_with_metadata([self.wheel(name="external", version="2.0")], "external")
+        lock = "external==2.0 --hash=sha256:" + "a" * 64 + "\n"
+        runtime_lock.verify_installation(plan, lock, [source_tar], [external_tar])
+        with self.assertRaisesRegex(runtime_lock.RuntimeLockError, "source installation set differs"):
+            runtime_lock.verify_installation(plan, lock, [external_tar], [source_tar])
+        with self.assertRaisesRegex(runtime_lock.RuntimeLockError, "third-party installation set differs"):
+            runtime_lock.verify_installation(plan, lock, [source_tar], [])
+
+    def test_stale_or_substituted_installed_metadata_fails(self):
+        _, metadata = self.installed_with_metadata([self.wheel()])
+        plan = self.plan(metadata, ["sample"])
+        changed = self.wheel({"sample-1.0.dist-info/METADATA":
+                              b"Metadata-Version: 2.1\nName: sample\nVersion: 1.0\nRequires-Dist: new-dependency\n"})
+        changed_tar, changed_metadata = self.installed_with_metadata([changed], "changed")
+        changed_plan = self.plan(changed_metadata, ["sample"])
+        self.assertNotEqual(runtime_lock.digest(runtime_lock.canonical_json(plan)),
+                            runtime_lock.digest(runtime_lock.canonical_json(changed_plan)))
+        requirements = self.root / "requirements.in"
+        lock = self.root / "requirements_lock.txt"
+        inputs = self.root / "lock-inputs.json"
+        requirements.write_text(runtime_lock.requirements_text(plan))
+        lock.write_text("")
+        inputs.write_text(json.dumps({
+            "schema_version": 1,
+            "plan_sha256": runtime_lock.digest(runtime_lock.canonical_json(plan)),
+            "requirements_sha256": runtime_lock.digest(requirements.read_bytes()),
+            "lock_sha256": runtime_lock.digest(lock.read_bytes()),
+        }))
+        runtime_lock.check(plan, requirements, lock, inputs)
+        with self.assertRaisesRegex(runtime_lock.RuntimeLockError, "runtime lock is stale"):
+            runtime_lock.check(changed_plan, requirements, lock, inputs)
+        with self.assertRaisesRegex(runtime_lock.RuntimeLockError, "metadata differs from producer"):
+            runtime_lock.verify_installation(plan, "", [changed_tar], [])
+
+    def test_missing_or_mismatched_metadata_rejected_before_publication(self):
+        for metadata in (
+            b"Name: sample\nVersion: 1.0\n",
+            b"Metadata-Version: 2.1\nVersion: 1.0\n",
+            b"Metadata-Version: 2.1\nName: sample\nName: another\nVersion: 1.0\n",
+            b"Metadata-Version: 2.1\nName: different\nVersion: 1.0\n",
+            b"Metadata-Version: 2.1\nName: sample\nVersion: 7.0\n",
+            b"Metadata-Version: 2.1\nName: sample\nVersion: 1.0\nRequires-Dist: <>invalid\n",
+        ):
+            with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                self.installed_with_metadata([self.wheel({"sample-1.0.dist-info/METADATA": metadata})])
+            self.assertFalse((self.root / "source0.json").exists())
+
+    def test_same_source_wheel_identity_and_metadata_are_reproducible(self):
+        wheel = self.wheel()
+        first, first_metadata = self.installed_with_metadata([wheel], "first")
+        second, second_metadata = self.installed_with_metadata([wheel], "second")
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        self.assertEqual(first_metadata[0].read_bytes(), second_metadata[0].read_bytes())
+
+    def test_wheel_tag_mismatch_is_rejected(self):
+        wheel = self.wheel({"sample-1.0.dist-info/WHEEL":
+                            b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: cp311-cp311-linux_aarch64\n"})
+        with self.assertRaisesRegex(ValueError, "tags disagree"):
+            self.installed_with_metadata([wheel])
+
+    def test_metadata_output_count_must_match_wheels(self):
+        with self.assertRaisesRegex(ValueError, "one metadata output"):
+            build_layer([self.wheel()], self.root / "bad.tar", "/site", "/bin", "/include", "/data", "/python",
+                        metadata_outputs=[])
 
 
 if __name__ == "__main__":

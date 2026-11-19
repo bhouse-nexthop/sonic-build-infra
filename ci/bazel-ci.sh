@@ -144,7 +144,7 @@ tests=(
 # These feature-specific targets are explicit; adding either public rule family
 # includes its existing regression tests in this shared workflow.
 if [[ -f python/wheel_layer.bzl ]]; then
-  tests+=(//python:wheel_layer_test)
+  tests+=(//python:wheel_layer_test //python/tests:wheel_runtime_test)
 fi
 if [[ -f tar/root_owned_tar.bzl ]]; then
   tests+=(//tar:root_owned_tar_test //tar:debug_symbols_manifest_test //tar:debug_symbols_ownership_test //tar:debug_symbols_modes_test)
