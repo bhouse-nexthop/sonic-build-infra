@@ -824,7 +824,7 @@ def materialize_directory_aliases(root: Path, *, copy_function=shutil.copy2) -> 
             # Keep their destinations when the alias has a different parent.
             for link in path.rglob("*"):
                 if link.is_symlink():
-                    destination = (target / link.relative_to(path)).resolve(strict=True)
+                    destination = (target / link.relative_to(path)).resolve(strict=False)
                     link.unlink()
                     link.symlink_to(os.path.relpath(destination, link.parent))
 

@@ -181,6 +181,21 @@ class RootfsTest(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"declared executable")
             self.assertEqual(path.stat().st_mode & 0o777, 0o751)
 
+    def test_directory_alias_preserves_optional_missing_file_link(self):
+        directory = self.root / "usr/lib/ssl"
+        directory.mkdir(parents=True)
+        (directory / "cert.pem").symlink_to("../../../etc/ssl/certs/ca-certificates.crt")
+
+        materialize_directory_aliases(self.root)
+
+        # The CA bundle is produced by a maintainer script, outside the offline
+        # tool runtime. Its owner can remove the link after tool preparation.
+        for name in ("lib/ssl/cert.pem", "usr/lib/ssl/cert.pem"):
+            path = self.root / name
+            self.assertTrue(path.is_symlink())
+            self.assertFalse(path.exists())
+            self.assertEqual(path.resolve(strict=False), self.root / "etc/ssl/certs/ca-certificates.crt")
+
     def test_library_metadata_preserves_package_ownership(self):
         payload = self.directory / "data.tar"
         control = self.directory / "control.tar"
