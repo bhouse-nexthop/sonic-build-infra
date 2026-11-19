@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from prepare_rootfs import add_target_packages, merge_target_payload, configure_xml_sax, initialize_root, package_metadata, preserve_empty_directories, remove_x11_alias, validate_links
-from prepare_runtime import extract_payload
+from prepare_runtime import extract_payload, materialize_directory_aliases
 
 
 def write_tar(path, records):
@@ -132,6 +132,54 @@ class RootfsTest(unittest.TestCase):
         for alias in ("lib32", "libx32", "empty-cache"):
             self.assertTrue((preserved / alias).is_dir())
             self.assertEqual((preserved / alias / ".bazel-keep-directory").read_bytes(), b"")
+
+    def test_directory_aliases_preserve_module_paths_and_modes_after_transport(self):
+        modules = self.root / "usr/share/perl/9.80.2/Test2/EventFacet/Info"
+        modules.mkdir(parents=True)
+        module = modules / "Table.pm"
+        module.write_bytes(b"package Test2::EventFacet::Info::Table; 1;\n")
+        module.chmod(0o640)
+        (modules / "Current.pm").symlink_to("Table.pm")
+        (modules.parents[3] / "9.80").symlink_to("9.80.2")
+        # A second alias exercises reuse of the same target with a different name.
+        (modules.parents[3] / "current").symlink_to("9.80")
+
+        materialize_directory_aliases(self.root, copy_function=os.link)
+        preserve_empty_directories(self.root)
+
+        # File-only restoration can create each parent without relying on an
+        # asynchronously downloaded directory symlink or its destination.
+        restored = self.directory / "restored"
+        for directory, _, names in os.walk(self.root, followlinks=False):
+            for name in names:
+                source = Path(directory) / name
+                target = restored / source.relative_to(self.root)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if source.is_symlink():
+                    target.symlink_to(source.readlink())
+                else:
+                    shutil.copy2(source, target)
+        for version in ("9.80.2", "9.80", "current"):
+            info = restored / "usr/share/perl" / version / "Test2/EventFacet/Info"
+            self.assertEqual((info / "Table.pm").read_bytes(), b"package Test2::EventFacet::Info::Table; 1;\n")
+            self.assertEqual((info / "Table.pm").stat().st_mode & 0o777, 0o640)
+            self.assertEqual((info / "Current.pm").read_bytes(), (info / "Table.pm").read_bytes())
+            self.assertTrue((info / "Current.pm").is_symlink())
+
+    def test_merged_usr_directory_alias_preserves_relative_file_link(self):
+        executable = self.root / "usr/libexec/example/tool"
+        executable.parent.mkdir(parents=True)
+        executable.write_bytes(b"declared executable")
+        executable.chmod(0o751)
+        (self.root / "usr/bin/tool").symlink_to("../libexec/example/tool")
+
+        materialize_directory_aliases(self.root, copy_function=os.link)
+
+        validate_links(self.root)
+        for name in ("bin/tool", "usr/bin/tool"):
+            path = self.root / name
+            self.assertEqual(path.read_bytes(), b"declared executable")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o751)
 
     def test_library_metadata_preserves_package_ownership(self):
         payload = self.directory / "data.tar"

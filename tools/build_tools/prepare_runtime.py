@@ -808,6 +808,27 @@ export PYTHONHOME PYTHONPATH PYTHONNOUSERSITE TZ
     }, indent=2) + "\n")
 
 
+def materialize_directory_aliases(root: Path, *, copy_function=shutil.copy2) -> None:
+    """Publish real directories so a cached tree never populates through aliases."""
+    while True:
+        links = [path for path in root.rglob("*") if path.is_symlink() and path.is_dir()]
+        if not links:
+            break
+        for path in links:
+            target = path.resolve(strict=True)
+            if not target.is_relative_to(root) or path.is_relative_to(target):
+                raise ValueError(f"invalid runtime directory alias: {path}")
+            path.unlink()
+            shutil.copytree(target, path, symlinks=True, copy_function=copy_function)
+            # Relative links were written for the canonical directory's depth.
+            # Keep their destinations when the alias has a different parent.
+            for link in path.rglob("*"):
+                if link.is_symlink():
+                    destination = (target / link.relative_to(path)).resolve(strict=True)
+                    link.unlink()
+                    link.symlink_to(os.path.relpath(destination, link.parent))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True)
@@ -833,21 +854,12 @@ def main() -> None:
         # Bazel caches files inside tree outputs. Materialize directory aliases
         # (notably Perl's 5.40 -> 5.40.1) so cache restoration never has to create
         # a child through a directory symlink before its target is populated.
-        while True:
-            links = [path for path in root.rglob("*") if path.is_symlink() and path.is_dir()]
-            if not links:
-                break
-            for path in links:
-                target = path.resolve(strict=True)
-                # X11 packages keep a compatibility alias /usr/bin/X11 -> .;
-                # none of the declared tools uses this recursive directory.
-                if args.profile in ("foreign", "image") and path in (root / "usr/bin/X11", root / "bin/X11") and target == path.parent:
+        # X11's recursive compatibility alias is unused by these tools.
+        if args.profile in ("foreign", "image"):
+            for path in (root / "usr/bin/X11", root / "bin/X11"):
+                if path.is_symlink() and path.resolve() == path.parent:
                     path.unlink()
-                    continue
-                if not target.is_relative_to(root) or path.is_relative_to(target):
-                    raise ValueError(f"invalid runtime directory alias: {path}")
-                path.unlink()
-                shutil.copytree(target, path, symlinks=True)
+        materialize_directory_aliases(root)
     loader = loader_path(root, args.architecture)
     libraries = library_directories(root)
     if args.profile == "gdb":
