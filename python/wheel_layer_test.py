@@ -163,6 +163,51 @@ class WheelLayerTest(unittest.TestCase):
         with self.assertRaisesRegex(runtime_lock.RuntimeLockError, "third-party installation set differs"):
             runtime_lock.verify_installation(plan, lock, [source_tar], [])
 
+    def test_rules_python_patched_filename_preserves_installed_metadata_and_identity(self):
+        for version, archive_version in (("1.0", "1.0+patched"),
+                                         ("1.0+vendor.1", "1.0+vendor.1.patched")):
+            with self.subTest(version=version):
+                original = self.wheel(version=version)
+                wheel = original.rename(self.root / f"sample-{archive_version}-py3-none-any.whl")
+                archive, outputs = self.installed_with_metadata([wheel])
+                record = json.loads(outputs[0].read_text())
+                self.assertEqual(record["version"], version)
+                self.assertEqual(record["wheel"]["filename"], wheel.name)
+                self.assertEqual(record["wheel"]["sha256"], hashlib.sha256(wheel.read_bytes()).hexdigest())
+                with zipfile.ZipFile(wheel) as source, tarfile.open(archive) as installed:
+                    path = f"sample-{version}.dist-info/METADATA"
+                    self.assertEqual(installed.extractfile(
+                        "./usr/local/lib/python3.13/dist-packages/" + path).read(), source.read(path))
+                self.assertEqual(archive.read_bytes(), self.layer([wheel], "legacy.tar").read_bytes())
+
+    def test_patch_suffix_does_not_hide_other_identity_or_tag_mismatches(self):
+        cases = (
+            ("1.0", "sample-2.0+patched-py3-none-any.whl"),
+            ("1.0", "sample-1.0+vendor-py3-none-any.whl"),
+            ("1.0", "sample-1.0+patched.extra-py3-none-any.whl"),
+            ("1.0+vendor.1", "sample-1.0+vendor.2.patched-py3-none-any.whl"),
+            ("1.0", "different-1.0+patched-py3-none-any.whl"),
+            ("1.0", "sample-1.0+patched-cp311-cp311-linux_aarch64.whl"),
+        )
+        for version, filename in cases:
+            with self.subTest(filename=filename):
+                wheel = self.wheel(version=version).rename(self.root / filename)
+                with self.assertRaises(ValueError):
+                    self.installed_with_metadata([wheel])
+                self.assertFalse((self.root / "source0.json").exists())
+
+    def test_patched_wheel_still_requires_matching_record_hashes(self):
+        wheel = self.wheel().rename(self.root / "sample-1.0+patched-py3-none-any.whl")
+        with zipfile.ZipFile(wheel) as archive:
+            files = {name: archive.read(name) for name in archive.namelist()}
+        files["sample/data.json"] = b"changed after patching"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            for name, content in files.items():
+                archive.writestr(name, content)
+        with self.assertRaises(ValueError):
+            self.installed_with_metadata([wheel])
+        self.assertFalse((self.root / "source0.json").exists())
+
     def test_stale_or_substituted_installed_metadata_fails(self):
         _, metadata = self.installed_with_metadata([self.wheel()])
         plan = self.plan(metadata, ["sample"])

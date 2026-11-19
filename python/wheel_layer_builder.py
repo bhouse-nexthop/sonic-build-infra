@@ -67,8 +67,14 @@ def wheel_runtime_metadata(wheel, source):
     name = canonicalize_name(_single_header(message, "Name", required=True), validate=True)
     version = Version(_single_header(message, "Version", required=True))
     filename_name, filename_version, _, filename_tags = parse_wheel_filename(Path(wheel).name)
-    if name != filename_name or version != filename_version:
-        raise ValueError("Wheel filename and METADATA distribution/version disagree")
+    # rules_python's patch_whl.bzl appends exactly one local "patched" segment
+    # to the archive filename while retaining the installed METADATA version.
+    # Keep that precise upstream convention separate from arbitrary mismatches.
+    patched_version = Version(str(version) + (".patched" if version.local else "+patched"))
+    if name != filename_name or filename_version not in (version, patched_version):
+        raise ValueError(
+            f"Wheel filename and METADATA distribution/version disagree: {Path(wheel).name} "
+            f"declares {name}=={version}")
     wheel_message = BytesParser().parsebytes(source.read_dist_info("WHEEL").encode("utf-8"))
     tags = {tag for value in wheel_message.get_all("Tag", []) for tag in parse_tag(value)}
     if tags != filename_tags:
