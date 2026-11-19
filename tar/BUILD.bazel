@@ -5,8 +5,21 @@ load("@rules_python//python:py_test.bzl", "py_test")
 load("@tar.bzl//tar:mtree.bzl", "mtree_mutate")
 load("@tar.bzl//tar:tar.bzl", "tar")
 load(":debug_symbols_tar.bzl", "debug_symbols_tar")
+load(":debug_symbols_fixture.bzl", "symbol_tree")
 
 exports_files(["debug_symbols_modes.awk"])
+
+py_binary(
+    name = "debug_symbols_manifest",
+    srcs = ["debug_symbols_manifest.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "debug_symbols_manifest_test",
+    srcs = ["debug_symbols_manifest.py", "debug_symbols_manifest_test.py"],
+    imports = ["."],
+)
 
 py_binary(
     name = "root_owned_tar",
@@ -32,17 +45,26 @@ write_file(
     ],
 )
 
+symbol_tree(
+    name = "ownership_tree",
+)
+
 debug_symbols_tar(
     name = "ownership_fixture_tar",
-    srcs = [":ownership_fixture"],
+    srcs = [":ownership_fixture", ":ownership_tree"],
     symlinks = {"usr/share/doc/fixture-dbgsym": "fixture"},
+)
+
+debug_symbols_tar(
+    name = "empty_symbols_tar",
+    srcs = [],
 )
 
 py_test(
     name = "debug_symbols_ownership_test",
     srcs = ["debug_symbols_ownership_test.py"],
-    args = ["$(location :ownership_fixture_tar)"],
-    data = [":ownership_fixture_tar"],
+    args = ["$(location :ownership_fixture_tar)", "$(location :empty_symbols_tar)"],
+    data = [":ownership_fixture_tar", ":empty_symbols_tar"],
 )
 
 # Check the mutation's boundary on an actual archive: file bytes and metadata,

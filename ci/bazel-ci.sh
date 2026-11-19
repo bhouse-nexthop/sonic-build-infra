@@ -147,7 +147,7 @@ if [[ -f python/wheel_layer.bzl ]]; then
   tests+=(//python:wheel_layer_test)
 fi
 if [[ -f tar/root_owned_tar.bzl ]]; then
-  tests+=(//tar:root_owned_tar_test //tar:debug_symbols_ownership_test //tar:debug_symbols_modes_test)
+  tests+=(//tar:root_owned_tar_test //tar:debug_symbols_manifest_test //tar:debug_symbols_ownership_test //tar:debug_symbols_modes_test)
 fi
 if [[ -f tools/build_tools/prepare_rootfs.py ]]; then
   tests+=(//tools/build_tools:prepare_rootfs_test //tools/build_tools:kernel_debian_test
