@@ -1,12 +1,18 @@
 # Deterministic tar packages
 
-Debug symbol archives from `debug_symbols_tar`, `sonic_deploy_tar` and the OCI
-debug layer store regular symbol files as `0644`, matching Debian's detached
-debug data. The standard `tar.bzl` mtree mutation pipeline changes only file
-modes; directory modes, links, contents, timestamps and
-ownership retain their existing behavior. `//tar:debug_symbols_ownership_test`
-checks the public debug archive, and `//tar:debug_symbols_modes_test` checks
-these metadata boundaries on an actual tar archive.
+`debug_symbols_tar` builds an installation mtree from the original symbol files
+and trees, then invokes `tar.bzl` once to produce an uncompressed `.tar` in every
+compilation mode. Both component packages and OCI debug layers use this path.
+The manifest maps build-id paths directly to their original file contents;
+there is no collected symbol directory or intermediate archive.
+
+The archive retains `/usr/lib/debug/.build-id/NN/REST.debug`, root ownership with
+empty user/group names, `0644` regular files, `0755` directories, deterministic
+timestamps, and declared installation symlinks. Conflicting symbol destinations
+and installation links that replace an existing entry are rejected.
+`//tar:debug_symbols_ownership_test` checks the public archive with ordinary
+files and generated symbol trees. `//tar:debug_symbols_manifest_test` checks the
+rejected destinations. `root_owned_tar` remains available for other archives.
 
 `sonic_deploy_tar` uses the standard `tar()` rule with
 `default_mtime = "1672560000"`, matching tar.bzl's automatic manifests. This
