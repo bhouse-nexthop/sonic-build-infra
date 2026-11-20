@@ -102,7 +102,7 @@ class DebianTransportTest(unittest.TestCase):
             stub.chmod(0o755)
             env = dict(os.environ, PATH=str(root) + ':/usr/bin:/bin', RUNNER_TEMP=str(root),
                        SONIC_BAZEL_REGISTRY='https://example.invalid/registry', PLATFORM='x86_64_trixie',
-                       ARCHITECTURE='amd64', SONIC_BAZEL_CI_SUITE='tar-runtime')
+                       ARCHITECTURE='amd64', SONIC_BAZEL_CI_SUITE='tar-runtime', CI_RAW_DIR=str(root))
             result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', prefix + '\n' + '\n'.join(commands)],
                                     cwd=root, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -244,7 +244,7 @@ class DebianTransportTest(unittest.TestCase):
             link.symlink_to(config)
             choices['symlink'] = str(link)
             env = dict(os.environ, PATH=str(commands) + ':/usr/bin:/bin', TEST_ROOT=str(root),
-                       BASH_ENV=str(bash_env), SONIC_BAZEL_CI_SUITE=suite)
+                       BASH_ENV=str(bash_env), SONIC_BAZEL_CI_SUITE=suite, RUNNER_TEMP=str(root))
             env.pop('SONIC_BAZEL_DOWNLOADER_CONFIG', None)
             if selected is not None:
                 env['SONIC_BAZEL_DOWNLOADER_CONFIG'] = choices[selected]

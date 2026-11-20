@@ -84,11 +84,20 @@ creation. It compiles and runs native C/C++ host programs, checks the ordinary
 deployment interpreter, and, on ARM64, compiles an ARM32 compatibility
 vDSO probe. These checks create no DEB packages or kernel image.
 
-Each run retains test XML/logs, build events, native host metadata, revision,
+Each run publishes an explicit allowlist of test XML/logs, typed action/cache
+receipts, native host metadata, revision,
 resolved module locks, the APT lock and its source/request inputs, sample
 executables, and their runtime/debug deployment tars. Successful runs include
 checksums in `provenance.json`. Download the architecture-specific artifact from the Actions run page. Partial evidence is
-retained when a validation step fails.
+retained when a validation step fails. Raw Bazel build events, action graphs and
+execution logs are private job diagnostics: they may contain process environment
+or command-line data and are never uploaded. General, declared-tool and Rust
+raw records live under the job's temporary directory; sysroot diagnostic graphs
+remain in the private staging directory and are excluded by the same explicit
+upload allowlist. The cross-runner artifact contains only its manifest, selected
+programs and declared runtime. `ci/tests/evidence_test.py` exercises the actual
+workflow allowlists with synthetic command/environment secrets, while retaining
+the typed cache proof, test results and runtime outputs needed for review.
 
 The installed deployment-tar check verifies the complete runtime file set,
 payload ownership and modes, declared data bytes, native ELF architecture,

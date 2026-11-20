@@ -63,6 +63,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check public evidence boundaries
+        run: python3 -B ci/tests/evidence_test.py
       - name: Verify native execution and install Bazel 8.5.1
         env:
           BAZEL_ARCH: ${{ matrix.bazel_arch }}
@@ -130,7 +132,68 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonic-build-infra-${{ matrix.arch }}-${{ github.sha }}
-          path: ci-artifacts/
+          # Raw BEPs, action graphs and spawn logs are private job diagnostics.
+          path: |
+            ci-artifacts/suite.json
+            ci-artifacts/registry.txt
+            ci-artifacts/revisions.txt
+            ci-artifacts/uname.txt
+            ci-artifacts/os-release
+            ci-artifacts/apt-lock-check.log
+            ci-artifacts/apt/apt.lock.json
+            ci-artifacts/apt/sources.json
+            ci-artifacts/apt/requests.json
+            ci-artifacts/ci/source_mirrors.cfg
+            ci-artifacts/source-mirrors.cfg
+            ci-artifacts/source-mirrors-url.txt
+            ci-artifacts/source-mirrors.sha256
+            ci-artifacts/MODULE.bazel
+            ci-artifacts/MODULE.bazel.lock
+            ci-artifacts/validation.log
+            ci-artifacts/host-packages.txt
+            ci-artifacts/targets.txt
+            ci-artifacts/bookworm-targets.txt
+            ci-artifacts/action-audit.json
+            ci-artifacts/apt-python313-action-audit.json
+            ci-artifacts/bookworm-action-audit.json
+            ci-artifacts/deploy-archives.json
+            ci-artifacts/strip-static-archive-cross.json
+            ci-artifacts/module-graph.txt
+            ci-artifacts/wheel_requirements_lock.txt
+            ci-artifacts/shared-api.MODULE.bazel.lock
+            ci-artifacts/oci-controls-consumer.MODULE.bazel.lock
+            ci-artifacts/unsafe-sysroot.log
+            ci-artifacts/provenance.json
+            ci-artifacts/testlogs/**/test.xml
+            ci-artifacts/testlogs/**/test.log
+            ci-artifacts/apt-python313-testlogs/**/test.xml
+            ci-artifacts/apt-python313-testlogs/**/test.log
+            ci-artifacts/bookworm-testlogs/**/test.xml
+            ci-artifacts/bookworm-testlogs/**/test.log
+            ci-artifacts/tests/**/test.xml
+            ci-artifacts/tests/**/test.log
+            ci-artifacts/outputs/hello
+            ci-artifacts/outputs/hello_cpp
+            ci-artifacts/outputs/*.tar
+            ci-artifacts/shared-sysroot/validation.json
+            ci-artifacts/shared-sysroot/*/validation.json
+            ci-artifacts/shared-sysroot/*/debian-compiler-validation.json
+            ci-artifacts/shared-sysroot/*/MODULE.bazel.lock
+            ci-artifacts/shared-sysroot/*/launcher-test.log
+            ci-artifacts/shared-sysroot/*/*-runtime.txt
+            ci-artifacts/shared-sysroot/*/*-elf.txt
+            ci-artifacts/shared-sysroot/*/shared-library-dynamic.txt
+            ci-artifacts/shared-sysroot/*/binutils/readelf.txt
+            ci-artifacts/sysroot-collisions/validation.json
+            ci-artifacts/sysroot-collisions/MODULE.bazel.lock
+            ci-artifacts/sysroot-collisions/*.log
+            ci-artifacts/cross-arm64/build-validation.json
+            ci-artifacts/cross-arm64/*/MODULE.bazel.lock
+            ci-artifacts/cross-arm64/*/debian-compiler-validation.json
+            ci-artifacts/cross-arm64/*/*-runtime.txt
+            ci-artifacts/cross-arm64/*/*-elf.txt
+            ci-artifacts/cross-arm64/*/shared-library-dynamic.txt
+            ci-artifacts/cross-arm64/*/binutils/readelf.txt
           if-no-files-found: error
           retention-days: 14
 
