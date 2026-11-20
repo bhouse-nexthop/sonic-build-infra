@@ -3,8 +3,10 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 root=$PWD
+. "$root/ci/suites.sh"
 artifacts="$root/ci-artifacts"
 mkdir -p "$artifacts"
+record_ci_suite "$artifacts/suite.json" "${deb_fixture_tests[@]}"
 exec > >(tee "$artifacts/validation.log") 2>&1
 python3 tools/rust/prepare_test.py
 case "$(uname -m)" in
@@ -52,7 +54,6 @@ tests=(
   //go:lock_test
   //deb:assemble_test
   //deb/tests:changelogs_test
-  //tests:hello_deb_optional_fields_build_test
   //deps:alternatives_test
   //oci/tests:runtime_packages_test //oci/tests:runtime_packages_rule_test
   //oci/tests:runtime_control_files_rule_test
@@ -141,6 +142,7 @@ tests=(
   //tests:installation_rpath_tar_test
   //toolchains/gcc/tests:prefix_map_test
 )
+tests+=("${deb_fixture_tests[@]}")
 # These feature-specific targets are explicit; adding either public rule family
 # includes its existing regression tests in this shared workflow.
 if [[ -f python/wheel_layer.bzl ]]; then
@@ -151,7 +153,7 @@ if [[ -f tar/root_owned_tar.bzl ]]; then
 fi
 if [[ -f tools/build_tools/prepare_rootfs.py ]]; then
   tests+=(//tools/build_tools:prepare_rootfs_test //tools/build_tools:kernel_debian_test
-    //tools/build_tools:kernel_runtime_test)
+    "$kernel_runtime_test")
   if [[ "$debian_arch" == amd64 ]]; then
     tests+=(//tools/build_tools:kernel_cross_runtime_arm64_test //tools/build_tools:kernel_cross_runtime_armhf_test)
   fi
@@ -164,9 +166,13 @@ fi
 if [[ "$debian_arch" == amd64 && -f tools/build_tools/docbook_runtime_test.py ]]; then
   tests+=(//tools/build_tools:docbook_runtime_test)
 fi
-# Audit the actual configured graph, including imported tests, before executing
-# any action. The dedicated DEB compatibility test intentionally creates DEBs;
-# keep it in the test suite and audit the ordinary production graph separately.
+if [[ "$cpu" == x86_64 ]]; then
+  tests+=(//tools/build_tools:p4rt_owner_tools_test)
+fi
+# Audit every selected runtime target before execution. Only the explicit
+# deb-fixtures suite adds the dedicated package-producing analysis test; its
+# outputs are outside this no-DEB runtime audit. The full kernel fixture creates
+# packages inside TestRunner, so the suite selection also gates that test body.
 printf '%s\n' "${tests[@]}" "${outputs[@]}" > "$artifacts/targets.txt"
 audit_tests=()
 for target in "${tests[@]}"; do
@@ -216,9 +222,6 @@ for filename in ('actions.json', 'apt-python313-actions.json', 'bookworm-actions
     (root / filename.replace('actions.json', 'action-audit.json')).write_text(json.dumps(receipt, indent=2) + '\n')
     assert not receipt['deb_outputs'] and not forbidden, receipt
 PYTHON
-if [[ "$cpu" == x86_64 ]]; then
-  tests+=(//tools/build_tools:p4rt_owner_tools_test)
-fi
 "${bazel_cmd[@]}" test "${flags[@]}" --nocache_test_results --test_output=errors \
   --build_event_json_file="$artifacts/tests.bep.json" "${tests[@]}"
 # Include external test labels and their canonical repository paths in artifacts.

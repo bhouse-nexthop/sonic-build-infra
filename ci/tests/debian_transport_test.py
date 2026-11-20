@@ -80,7 +80,8 @@ class DebianTransportTest(unittest.TestCase):
         actual = script('Build executable tools and exercise sandboxed invocation')
         # Exercise the actual flag and target-selection shell without the
         # unrelated host and APT evidence setup inherited from the base.
-        prefix = 'flags=(' + actual.split('flags=(', 1)[1].split('bazel --ignore_all_rc_files', 1)[0]
+        prefix = '. ' + str(ROOT / 'ci/suites.sh') + '\n'
+        prefix += 'flags=(' + actual.split('flags=(', 1)[1].split('bazel --ignore_all_rc_files', 1)[0]
         prefix += 'worker_tests=()' + actual.split('worker_tests=()', 1)[1].split('bazel --ignore_all_rc_files test', 1)[0]
         commands = []
         lines = actual.splitlines()
@@ -101,7 +102,7 @@ class DebianTransportTest(unittest.TestCase):
             stub.chmod(0o755)
             env = dict(os.environ, PATH=str(root) + ':/usr/bin:/bin', RUNNER_TEMP=str(root),
                        SONIC_BAZEL_REGISTRY='https://example.invalid/registry', PLATFORM='x86_64_trixie',
-                       ARCHITECTURE='amd64')
+                       ARCHITECTURE='amd64', SONIC_BAZEL_CI_SUITE='tar-runtime')
             result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', prefix + '\n' + '\n'.join(commands)],
                                     cwd=root, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -118,8 +119,21 @@ class DebianTransportTest(unittest.TestCase):
                 self.assertIn('--disk_cache=' + str(root / 'configure-tools-cache'), call)
                 self.assertIn('--lockfile_mode=update', call)
             self.assertIn('--output_user_root=' + str(root / 'configure-tools-fresh'), calls[-1])
-            self.assertIn('//tools/build_tools:kernel_runtime_test', calls[1])
-            self.assertIn('//tools/build_tools:kernel_runtime_test', calls[-1])
+            self.assertIn('//tools/build_tools:kernel_runtime_tools_test', calls[1])
+            self.assertIn('//tools/build_tools:kernel_runtime_tools_test', calls[-1])
+            self.assertNotIn('//tools/build_tools:kernel_runtime_test', calls[1])
+            # The explicit suite retains the original initial AND restored
+            # package-fixture invocation. This stub never executes Bazel.
+            (root / 'calls.jsonl').unlink()
+            env['SONIC_BAZEL_CI_SUITE'] = 'deb-fixtures'
+            result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', prefix + '\n' + '\n'.join(commands)],
+                                    cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            package_calls = [json.loads(line) for line in (root / 'calls.jsonl').read_text().splitlines()]
+            self.assertEqual(len(package_calls), len(calls))
+            for runtime_call, package_call in zip(calls, package_calls):
+                expected = [arg.replace(':kernel_runtime_tools_test', ':kernel_runtime_test') for arg in runtime_call]
+                self.assertEqual(package_call, expected)
 
     def test_general_workflow_uses_same_verified_config_before_all_consumers(self):
         name = 'Fetch the verified shared downloader configuration'
@@ -166,12 +180,13 @@ class DebianTransportTest(unittest.TestCase):
                 self.assertIn('--startup-option=--ignore_all_rc_files', call)
                 self.assertIn('--bazel-option=--registry=https://bcr.bazel.build/', call)
 
-    def run_general_script(self, selected):
+    def run_general_script(self, selected, suite="tar-runtime"):
         """Execute the actual shell with inert external commands; never Bazel."""
         with tempfile.TemporaryDirectory(prefix='general transport ') as directory:
             root = Path(directory)
             (root / 'ci').mkdir()
             (root / 'ci/bazel-ci.sh').write_bytes((ROOT / 'ci/bazel-ci.sh').read_bytes())
+            (root / 'ci/suites.sh').write_bytes((ROOT / 'ci/suites.sh').read_bytes())
             (root / 'ci/source_mirrors.cfg').write_bytes((ROOT / 'ci/source_mirrors.cfg').read_bytes())
             for path in ['python/wheel_layer.bzl', 'tar/root_owned_tar.bzl',
                          'tools/build_tools/prepare_rootfs.py', 'tools/build_tools/docbook_runtime_test.py',
@@ -229,7 +244,7 @@ class DebianTransportTest(unittest.TestCase):
             link.symlink_to(config)
             choices['symlink'] = str(link)
             env = dict(os.environ, PATH=str(commands) + ':/usr/bin:/bin', TEST_ROOT=str(root),
-                       BASH_ENV=str(bash_env))
+                       BASH_ENV=str(bash_env), SONIC_BAZEL_CI_SUITE=suite)
             env.pop('SONIC_BAZEL_DOWNLOADER_CONFIG', None)
             if selected is not None:
                 env['SONIC_BAZEL_DOWNLOADER_CONFIG'] = choices[selected]
@@ -260,9 +275,42 @@ class DebianTransportTest(unittest.TestCase):
                 self.assertEqual(lock_check['cwd'], root)
                 self.assertEqual(lock_check['args'][-3:], ['//apt:lock', '--', 'check'])
                 root_tests = next(c['args'] for c in calls if 'test' in c['args'])
-                self.assertIn('//tools/build_tools:kernel_runtime_test', root_tests)
-                self.assertNotIn('//tools/build_tools:kernel_runtime_tools_test', root_tests)
+                self.assertIn('//tools/build_tools:kernel_runtime_tools_test', root_tests)
+                self.assertNotIn('//tools/build_tools:kernel_runtime_test', root_tests)
+                self.assertNotIn('//tests:hello_deb_optional_fields_build_test', root_tests)
+                ordinary_graph = next(c['args'][-1] for c in calls if 'aquery' in c['args'])
+                self.assertIn('//tools/build_tools:p4rt_owner_tools_test', ordinary_graph)
                 self.assertIn('//swig/tests:defines_test', root_tests)
+
+    def test_explicit_package_scope_preserves_all_other_general_tests(self):
+        runtime, runtime_calls, _, _ = self.run_general_script('valid')
+        package, package_calls, _, _ = self.run_general_script('valid', 'deb-fixtures')
+        self.assertEqual(runtime.returncode, 0, runtime.stderr)
+        self.assertEqual(package.returncode, 0, package.stderr)
+        runtime_targets = {a for a in next(c['args'] for c in runtime_calls if 'test' in c['args']) if a.startswith('//')}
+        package_targets = {a for a in next(c['args'] for c in package_calls if 'test' in c['args']) if a.startswith('//')}
+        self.assertEqual(runtime_targets - package_targets, {'//tools/build_tools:kernel_runtime_tools_test'})
+        self.assertEqual(package_targets - runtime_targets, {
+            '//tools/build_tools:kernel_runtime_test', '//tests:hello_deb_optional_fields_build_test'})
+
+    def test_suite_receipt_distinguishes_workflow_coverage(self):
+        for suite in ['tar-runtime', 'deb-fixtures']:
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
+                receipt = Path(directory) / 'suite.json'
+                env = dict(os.environ, SONIC_BAZEL_CI_SUITE=suite, GITHUB_STEP_SUMMARY=str(Path(directory) / 'summary'))
+                subprocess.run(['bash', '-eu', '-c', '. "$1"; record_ci_suite "$2"',
+                                'suite-test', str(ROOT / 'ci/suites.sh'), str(receipt)], env=env, check=True)
+                data = json.loads(receipt.read_text())
+                self.assertEqual(data['suite'], suite)
+                self.assertEqual(data['deb_fixture_targets'],
+                                 ['//tools/build_tools:kernel_runtime_test'] if suite == 'deb-fixtures' else [])
+                self.assertNotIn('hello_deb', receipt.read_text())
+
+    def test_unknown_suite_stops_before_any_bazel(self):
+        result, calls, _, _ = self.run_general_script('valid', 'typo')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unknown SONIC_BAZEL_CI_SUITE', result.stderr + result.stdout)
+        self.assertEqual(calls, [])
 
     def test_invalid_general_config_stops_before_any_bazel(self):
         for selected in ['missing', 'relative', 'directory', 'symlink']:

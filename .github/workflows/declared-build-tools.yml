@@ -2,11 +2,18 @@ name: Declared build tools
 
 on:
   pull_request:
-    paths: ['apt/**', 'toolchains/bookworm/**', 'toolchains/gcc/**', 'tools/build_tools/**', 'MODULE.bazel', 'ci/source_mirrors.cfg', 'ci/tests/debian_transport_test.py', '.github/workflows/declared-build-tools.yml']
+    paths: ['apt/**', 'toolchains/bookworm/**', 'toolchains/gcc/**', 'tools/build_tools/**', 'MODULE.bazel', 'ci/source_mirrors.cfg', 'ci/suites.sh', 'ci/tests/debian_transport_test.py', '.github/workflows/declared-build-tools.yml']
   push:
     branches: [master]
-    paths: ['apt/**', 'toolchains/bookworm/**', 'toolchains/gcc/**', 'tools/build_tools/**', 'MODULE.bazel', 'ci/source_mirrors.cfg', 'ci/tests/debian_transport_test.py', '.github/workflows/declared-build-tools.yml']
+    paths: ['apt/**', 'toolchains/bookworm/**', 'toolchains/gcc/**', 'tools/build_tools/**', 'MODULE.bazel', 'ci/source_mirrors.cfg', 'ci/suites.sh', 'ci/tests/debian_transport_test.py', '.github/workflows/declared-build-tools.yml']
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Validation scope; deb-fixtures explicitly generates sample DEBs'
+        type: choice
+        options: [tar-runtime, deb-fixtures]
+        default: tar-runtime
+        required: true
 
 permissions:
   contents: read
@@ -40,6 +47,7 @@ jobs:
       run:
         shell: bash
     env:
+      SONIC_BAZEL_CI_SUITE: ${{ inputs.suite || 'tar-runtime' }}
       ARCHITECTURE: ${{ matrix.architecture }}
       PLATFORM: ${{ matrix.platform }}
       BAZEL_ARCH: ${{ matrix.bazel_arch }}
@@ -82,6 +90,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ci-artifacts
+          . ci/suites.sh
+          record_ci_suite ci-artifacts/suite.json
           printf '%s\n' "$SONIC_BAZEL_REGISTRY" > ci-artifacts/registry.txt
           git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD HEAD^{tree} > ci-artifacts/revisions.txt
           printf '%s\n' "$GITHUB_RUN_ID" > ci-artifacts/github-run-id.txt
@@ -136,7 +146,7 @@ jobs:
             //tools/build_tools:perl_bookworm_test \
             //tools/build_tools:bookworm_test_runtime_test \
             //tools/build_tools:configure_make_test \
-            //tools/build_tools:prepare_rootfs_test //tools/build_tools:kernel_runtime_test \
+            //tools/build_tools:prepare_rootfs_test "$kernel_runtime_test" \
             "${worker_tests[@]}" \
             2>&1 | tee ci-artifacts/test.log
           mkdir -p ci-artifacts/libtool
@@ -155,7 +165,7 @@ jobs:
             --execution_log_json_file="$PWD/ci-artifacts/cache-spawns.json" \
             --execution_log_sort=false \
             //tools/build_tools:configure_runtime_test //tools/build_tools:foreign_runtime_test \
-            //tools/build_tools:kernel_runtime_test \
+            "$kernel_runtime_test" \
             2>&1 | tee ci-artifacts/cache-test.log
           python3 - <<'PYTHON'
           import json

@@ -5,6 +5,13 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Validation scope; deb-fixtures explicitly generates sample DEBs'
+        type: choice
+        options: [tar-runtime, deb-fixtures]
+        default: tar-runtime
+        required: true
 
 permissions:
   contents: read
@@ -41,6 +48,7 @@ jobs:
       run:
         shell: bash
     env:
+      SONIC_BAZEL_CI_SUITE: ${{ inputs.suite || 'tar-runtime' }}
       DEBIAN_FRONTEND: noninteractive
       EXPECTED_MACHINE: ${{ matrix.machine }}
       EXPECTED_DEBIAN_ARCH: ${{ matrix.debian_arch }}
