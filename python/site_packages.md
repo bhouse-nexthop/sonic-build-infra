@@ -65,7 +65,9 @@ requirements are preserved, not resolved. `runtime_deps` links source package
 installation targets; it never merges their files into this distribution.
 `PythonRuntimeInfo` from `//python:source_package.bzl` exposes:
 
-- `packages`: transitive structs with `distribution`, `version`, `producer`, `tar`, `metadata`.
+- `packages`: transitive structs with `producer`, `tar`, `metadata`. Direct-source
+  producers also expose static `distribution` and `version`; [wheel producers](wheel_layer.md)
+  expose the selected `wheel` file and derive distribution/version in their JSON.
 - `tars`: transitive installation TARs.
 - `metadata`: transitive JSON files preserving identity, Requires-Python,
   Requires-Dist (including extras/markers), entry points and target tags.

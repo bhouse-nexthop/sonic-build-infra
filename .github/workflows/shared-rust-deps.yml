@@ -54,6 +54,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check public evidence boundaries
+        run: python3 -B ci/tests/evidence_test.py
       - name: Verify native execution and install Bazel 8.5.1
         env:
           BAZEL_ARCH: ${{ matrix.bazel_arch }}
@@ -73,9 +75,11 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tools/rust -p '*_test.py'
           mkdir -p rust/deps/ci-artifacts
+          install -d -m 0700 "$RUNNER_TEMP/sonic-infra-rust"
+          raw="$RUNNER_TEMP/sonic-infra-rust"
           cd rust/deps
-          bazel test --jobs=2 --lockfile_mode=update --test_output=errors --build_event_json_file=ci-artifacts/test-events.json //tests:serde_roundtrip_test //tests:tracing_test //tests:supervisor_io_test //tests:panic_runtime_test //tests:dash_ha_contract_test 2>&1 | tee ci-artifacts/tests.log
-          bazel build --jobs=2 --build_event_json_file=ci-artifacts/ha-dependency-events.json \
+          bazel test --jobs=2 --lockfile_mode=update --test_output=errors --build_event_json_file="$raw/test-events.json" //tests:serde_roundtrip_test //tests:tracing_test //tests:supervisor_io_test //tests:panic_runtime_test //tests:dash_ha_contract_test 2>&1 | tee ci-artifacts/tests.log
+          bazel build --jobs=2 --build_event_json_file="$raw/ha-dependency-events.json" \
             //:anyhow //:atomic_enum //:better-panic //:bollard //:contracts \
             //:dashmap //:derivative //:enumset //:file-rotate //:futures-core \
             //:futures-util //:hex //:human-panic //:hyper-util //:pretty_assertions \
@@ -89,7 +93,7 @@ jobs:
           cp bazel-testlogs/tests/supervisor_io_test/test.xml ci-artifacts/supervisor-io-test.xml
           cp bazel-testlogs/tests/panic_runtime_test/test.xml ci-artifacts/panic-runtime-test.xml
           cp bazel-testlogs/tests/dash_ha_contract_test/test.xml ci-artifacts/dash-ha-contract-test.xml
-          bazel test --jobs=2 -c opt --@rules_rust//rust/settings:lto=fat --@rules_rust//rust/settings:codegen_units=1 --test_output=errors --build_event_json_file=ci-artifacts/release-events.json //tests:panic_runtime_test 2>&1 | tee ci-artifacts/release-tests.log
+          bazel test --jobs=2 -c opt --@rules_rust//rust/settings:lto=fat --@rules_rust//rust/settings:codegen_units=1 --test_output=errors --build_event_json_file="$raw/release-events.json" //tests:panic_runtime_test 2>&1 | tee ci-artifacts/release-tests.log
           cp bazel-testlogs/tests/panic_runtime_test/test.xml ci-artifacts/panic-release-test.xml
           test ! -e Cargo.Bazel.lock
           git diff --exit-code -- Cargo.lock
@@ -98,6 +102,7 @@ jobs:
           set -euo pipefail
           root="$PWD"
           artifacts="$root/rust/deps/ci-artifacts"
+          raw="$RUNNER_TEMP/sonic-infra-rust"
           cd rust/tests/release_consumer
           overrides=(--override_module=sonic-build-infra="$root" --override_module=sonic-rust-deps="$root/rust/deps")
           platform=()
@@ -105,8 +110,8 @@ jobs:
           bazel run "${overrides[@]}" "${platform[@]}" @sonic_build_infra//rust:cargo -- metadata --locked --format-version=1 --manifest-path "$root/rust/deps/Cargo.toml" > "$artifacts/cargo-release-metadata.json"
           bazel build "${overrides[@]}" "${platform[@]}" --jobs=2 //:new_crate_exports
           bazel test "${overrides[@]}" "${platform[@]}" --jobs=2 --test_output=errors //:runtime_debug_test 2>&1 | tee "$artifacts/cargo-release-tests.log"
-          bazel aquery "${overrides[@]}" "${platform[@]}" -c fastbuild --@rules_rust//rust/settings:lto=fat --@rules_rust//rust/settings:codegen_units=1 --output=jsonproto 'deps(set(//:probe.release //:probe.unprofiled))' > "$artifacts/cargo-release-actions.json"
-          python3 profile_contract.py "$artifacts/cargo-release-actions.json" > "$artifacts/cargo-release-profile.json"
+          bazel aquery "${overrides[@]}" "${platform[@]}" -c fastbuild --@rules_rust//rust/settings:lto=fat --@rules_rust//rust/settings:codegen_units=1 --output=jsonproto 'deps(set(//:probe.release //:probe.unprofiled))' > "$raw/cargo-release-actions.json"
+          python3 profile_contract.py "$raw/cargo-release-actions.json" > "$artifacts/cargo-release-profile.json"
       - name: Collect shared dependency evidence
         if: always()
         run: |
@@ -121,6 +126,26 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonic-rust-deps-${{ matrix.arch }}-${{ github.sha }}
-          path: rust/deps/ci-artifacts/
+          # Raw BEPs, action graphs and spawn logs are private job diagnostics.
+          path: |
+            rust/deps/ci-artifacts/Cargo.toml
+            rust/deps/ci-artifacts/Cargo.lock
+            rust/deps/ci-artifacts/MODULE.bazel
+            rust/deps/ci-artifacts/MODULE.bazel.lock
+            rust/deps/ci-artifacts/source-commit.txt
+            rust/deps/ci-artifacts/machine.txt
+            rust/deps/ci-artifacts/tests.log
+            rust/deps/ci-artifacts/ha-dependencies.log
+            rust/deps/ci-artifacts/release-tests.log
+            rust/deps/ci-artifacts/cargo-release-tests.log
+            rust/deps/ci-artifacts/serde-dependencies.txt
+            rust/deps/ci-artifacts/serde-test.xml
+            rust/deps/ci-artifacts/tracing-test.xml
+            rust/deps/ci-artifacts/supervisor-io-test.xml
+            rust/deps/ci-artifacts/panic-runtime-test.xml
+            rust/deps/ci-artifacts/dash-ha-contract-test.xml
+            rust/deps/ci-artifacts/panic-release-test.xml
+            rust/deps/ci-artifacts/cargo-release-metadata.json
+            rust/deps/ci-artifacts/cargo-release-profile.json
           if-no-files-found: error
           retention-days: 14

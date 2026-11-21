@@ -2,11 +2,18 @@ name: Declared build tools
 
 on:
   pull_request:
-    paths: ['apt/**', 'toolchains/bookworm/**', 'toolchains/gcc/**', 'tools/build_tools/**', 'MODULE.bazel', 'ci/source_mirrors.cfg', 'ci/tests/debian_transport_test.py', '.github/workflows/declared-build-tools.yml']
+    paths: ['apt/**', 'toolchains/bookworm/**', 'toolchains/gcc/**', 'tools/build_tools/**', 'MODULE.bazel', 'ci/source_mirrors.cfg', 'ci/suites.sh', 'ci/tests/evidence_test.py', 'ci/tests/debian_transport_test.py', '.github/workflows/declared-build-tools.yml']
   push:
     branches: [master]
-    paths: ['apt/**', 'toolchains/bookworm/**', 'toolchains/gcc/**', 'tools/build_tools/**', 'MODULE.bazel', 'ci/source_mirrors.cfg', 'ci/tests/debian_transport_test.py', '.github/workflows/declared-build-tools.yml']
+    paths: ['apt/**', 'toolchains/bookworm/**', 'toolchains/gcc/**', 'tools/build_tools/**', 'MODULE.bazel', 'ci/source_mirrors.cfg', 'ci/suites.sh', 'ci/tests/evidence_test.py', 'ci/tests/debian_transport_test.py', '.github/workflows/declared-build-tools.yml']
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Validation scope; deb-fixtures explicitly generates sample DEBs'
+        type: choice
+        options: [tar-runtime, deb-fixtures]
+        default: tar-runtime
+        required: true
 
 permissions:
   contents: read
@@ -40,6 +47,7 @@ jobs:
       run:
         shell: bash
     env:
+      SONIC_BAZEL_CI_SUITE: ${{ inputs.suite || 'tar-runtime' }}
       ARCHITECTURE: ${{ matrix.architecture }}
       PLATFORM: ${{ matrix.platform }}
       BAZEL_ARCH: ${{ matrix.bazel_arch }}
@@ -62,6 +70,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Check public evidence boundaries
+        run: python3 -B ci/tests/evidence_test.py
       - name: Check downloader configuration
         run: python3 -B ci/tests/debian_transport_test.py
       - name: Fetch the verified shared downloader configuration
@@ -82,6 +92,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ci-artifacts
+          . ci/suites.sh
+          export CI_RAW_DIR
+          CI_RAW_DIR=$(mktemp -d "$RUNNER_TEMP/sonic-infra-tools.XXXXXXXX")
+          record_ci_suite ci-artifacts/suite.json
           printf '%s\n' "$SONIC_BAZEL_REGISTRY" > ci-artifacts/registry.txt
           git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD HEAD^{tree} > ci-artifacts/revisions.txt
           printf '%s\n' "$GITHUB_RUN_ID" > ci-artifacts/github-run-id.txt
@@ -101,7 +115,7 @@ jobs:
                  --repository_cache="$RUNNER_TEMP/configure-tools-repository-cache" \
                  --disk_cache="$RUNNER_TEMP/configure-tools-cache" --lockfile_mode=update)
           bazel --ignore_all_rc_files build "${flags[@]}" \
-            --build_event_json_file="$PWD/ci-artifacts/build-events.jsonl" \
+            --build_event_json_file="$CI_RAW_DIR/build-events.jsonl" \
             //tools/build_tools:aspell //tools/build_tools:doxygen \
             //tools/build_tools:make //tools/build_tools:m4 \
             //tools/build_tools:pkgconf //tools/build_tools:perl \
@@ -116,7 +130,7 @@ jobs:
             worker_tests+=(//tools/build_tools:installer_worker_debs_test)
           fi
           bazel --ignore_all_rc_files test "${flags[@]}" --nocache_test_results \
-            --test_output=errors --build_event_json_file="$PWD/ci-artifacts/test-events.jsonl" \
+            --test_output=errors --build_event_json_file="$CI_RAW_DIR/test-events.jsonl" \
             //tests:host_patchelf_test //tests:source_host_tools_test \
             //tools/build_tools:runtime_test \
             //tools/build_tools:runtime_launcher_test \
@@ -136,7 +150,7 @@ jobs:
             //tools/build_tools:perl_bookworm_test \
             //tools/build_tools:bookworm_test_runtime_test \
             //tools/build_tools:configure_make_test \
-            //tools/build_tools:prepare_rootfs_test //tools/build_tools:kernel_runtime_test \
+            //tools/build_tools:prepare_rootfs_test "$kernel_runtime_test" \
             "${worker_tests[@]}" \
             2>&1 | tee ci-artifacts/test.log
           mkdir -p ci-artifacts/libtool
@@ -146,22 +160,22 @@ jobs:
           while IFS= read -r file; do cp -L "$file" ci-artifacts/libtool/; done < ci-artifacts/libtool/outputs.txt
           (cd ci-artifacts/libtool && sha256sum probe libprobe.so.0 libcprobe.so.0 config.log compiler-argv-validation.json > SHA256SUMS)
           bazel --ignore_all_rc_files aquery "${flags[@]}" --output=jsonproto \
-            'deps(//tools/build_tools:configure_make_test)' > ci-artifacts/configure-actions.json
+            'deps(//tools/build_tools:configure_make_test)' > "$CI_RAW_DIR/configure-actions.json"
           test -s MODULE.bazel.lock
           cp -aL bazel-testlogs ci-artifacts/initial-testlogs
           bazel --ignore_all_rc_files --output_user_root="$RUNNER_TEMP/configure-tools-fresh" \
             test "${flags[@]}" --nocache_test_results --test_output=errors \
-            --build_event_json_file="$PWD/ci-artifacts/cache-test-events.jsonl" \
-            --execution_log_json_file="$PWD/ci-artifacts/cache-spawns.json" \
+            --build_event_json_file="$CI_RAW_DIR/cache-test-events.jsonl" \
+            --execution_log_json_file="$CI_RAW_DIR/cache-spawns.json" \
             --execution_log_sort=false \
             //tools/build_tools:configure_runtime_test //tools/build_tools:foreign_runtime_test \
-            //tools/build_tools:kernel_runtime_test \
+            "$kernel_runtime_test" \
             2>&1 | tee ci-artifacts/cache-test.log
           python3 - <<'PYTHON'
           import json
           import os
           from pathlib import Path
-          data = Path("ci-artifacts/cache-spawns.json").read_text()
+          data = (Path(os.environ["CI_RAW_DIR"]) / "cache-spawns.json").read_text()
           decoder = json.JSONDecoder()
           offset, runtimes = 0, []
           while offset < len(data):
@@ -191,6 +205,41 @@ jobs:
         if: always()
         with:
           name: declared-build-tools-${{ matrix.architecture }}
-          path: ci-artifacts/
+          # Raw BEPs, action graphs and spawn logs are private job diagnostics.
+          path: |
+            ci-artifacts/suite.json
+            ci-artifacts/registry.txt
+            ci-artifacts/revisions.txt
+            ci-artifacts/uname.txt
+            ci-artifacts/os-release
+            ci-artifacts/apt-lock-check.log
+            ci-artifacts/apt/apt.lock.json
+            ci-artifacts/apt/sources.json
+            ci-artifacts/apt/requests.json
+            ci-artifacts/ci/source_mirrors.cfg
+            ci-artifacts/source-mirrors.cfg
+            ci-artifacts/source-mirrors-url.txt
+            ci-artifacts/source-mirrors.sha256
+            ci-artifacts/MODULE.bazel
+            ci-artifacts/MODULE.bazel.lock
+            ci-artifacts/github-run-id.txt
+            ci-artifacts/architecture.txt
+            ci-artifacts/inputs.sha256
+            ci-artifacts/build.log
+            ci-artifacts/test.log
+            ci-artifacts/cache-test.log
+            ci-artifacts/cache-reuse.json
+            ci-artifacts/launcher_action_check.json
+            ci-artifacts/libtool/probe
+            ci-artifacts/libtool/libprobe.so.0
+            ci-artifacts/libtool/libcprobe.so.0
+            ci-artifacts/libtool/config.log
+            ci-artifacts/libtool/compiler-argv-validation.json
+            ci-artifacts/libtool/outputs.txt
+            ci-artifacts/libtool/SHA256SUMS
+            ci-artifacts/initial-testlogs/**/test.xml
+            ci-artifacts/initial-testlogs/**/test.log
+            ci-artifacts/testlogs/**/test.xml
+            ci-artifacts/testlogs/**/test.log
           if-no-files-found: error
           retention-days: 30

@@ -4,12 +4,56 @@ load("@rules_python//python:py_test.bzl", "py_test")
 load("@sonic_wheel_pip//:requirements.bzl", "requirement")
 load("//python:site_packages.bzl", "site_packages")
 load("//python:source_package.bzl", "python_runtime_packages")
+load("//python:runtime_lock.bzl", "python_runtime_plan")
+load("//python:wheel_layer.bzl", "wheel_layer")
 load(":inherited_runtime_fixture.bzl", "inherited_runtime_fixture")
 load(":site_packages_contract.bzl", "demo_targets")
 
 package(default_testonly = True)
 
 demo_targets(name = "demo")
+
+wheel_layer(
+    name = "wheel_demo_runtime",
+    wheels = [":demo_wheel"],
+    site_packages = "/opt/runtime/site",
+    scripts = "/opt/runtime/bin",
+    headers = "/opt/runtime/include",
+    data_prefix = "/opt/runtime",
+    interpreter = "/usr/bin/python3",
+    runtime_deps = [":leaf"],
+)
+
+filegroup(
+    name = "wheel_demo_metadata",
+    srcs = [":wheel_demo_runtime"],
+    output_group = "metadata",
+)
+
+python_runtime_plan(
+    name = "wheel_demo_plan",
+    packages = [":wheel_demo_runtime"],
+    roots = ["site-demo[metrics]"],
+    source_distributions = ["site-demo", "leaf-package"],
+    site_packages = ["/opt/runtime/site"],
+    python_version = "3.13",
+    python_platform = "x86_64-unknown-linux-gnu",
+    uv_version = "0.12.18",
+)
+
+py_test(
+    name = "wheel_runtime_test",
+    srcs = ["wheel_runtime_test.py"],
+    args = [
+        "--wheel=$(location :demo_wheel)",
+        "--tar=$(location :wheel_demo_runtime)",
+        "--plan=$(location :wheel_demo_plan)",
+        "--metadata",
+        "$(locations :wheel_demo_metadata)",
+    ],
+    data = [":demo_wheel", ":wheel_demo_runtime", ":wheel_demo_plan", ":wheel_demo_metadata"],
+    python_version = "3.11",
+)
 
 write_file(
     name = "generated_data",

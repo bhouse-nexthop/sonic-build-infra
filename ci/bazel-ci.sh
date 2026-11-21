@@ -3,8 +3,12 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 root=$PWD
+. "$root/ci/suites.sh"
 artifacts="$root/ci-artifacts"
 mkdir -p "$artifacts"
+# Raw events/action graphs can contain process environment and stay job-private.
+raw=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/sonic-infra-bazel.XXXXXXXX")
+record_ci_suite "$artifacts/suite.json" "${deb_fixture_tests[@]}"
 exec > >(tee "$artifacts/validation.log") 2>&1
 python3 tools/rust/prepare_test.py
 case "$(uname -m)" in
@@ -52,7 +56,6 @@ tests=(
   //go:lock_test
   //deb:assemble_test
   //deb/tests:changelogs_test
-  //tests:hello_deb_optional_fields_build_test
   //deps:alternatives_test
   //oci/tests:runtime_packages_test //oci/tests:runtime_packages_rule_test
   //oci/tests:runtime_control_files_rule_test
@@ -142,17 +145,18 @@ tests=(
   //toolchains/gcc/tests:prefix_map_test
   //toolchains/gcc/tests:assembly_include_test
 )
+tests+=("${deb_fixture_tests[@]}")
 # These feature-specific targets are explicit; adding either public rule family
 # includes its existing regression tests in this shared workflow.
 if [[ -f python/wheel_layer.bzl ]]; then
-  tests+=(//python:wheel_layer_test)
+  tests+=(//python:wheel_layer_test //python/tests:wheel_runtime_test)
 fi
 if [[ -f tar/root_owned_tar.bzl ]]; then
   tests+=(//tar:root_owned_tar_test //tar:debug_symbols_manifest_test //tar:debug_symbols_ownership_test //tar:debug_symbols_modes_test)
 fi
 if [[ -f tools/build_tools/prepare_rootfs.py ]]; then
   tests+=(//tools/build_tools:prepare_rootfs_test //tools/build_tools:kernel_debian_test
-    //tools/build_tools:kernel_runtime_test)
+    "$kernel_runtime_test")
   if [[ "$debian_arch" == amd64 ]]; then
     tests+=(//tools/build_tools:kernel_cross_runtime_arm64_test //tools/build_tools:kernel_cross_runtime_armhf_test)
   fi
@@ -165,9 +169,13 @@ fi
 if [[ "$debian_arch" == amd64 && -f tools/build_tools/docbook_runtime_test.py ]]; then
   tests+=(//tools/build_tools:docbook_runtime_test)
 fi
-# Audit the actual configured graph, including imported tests, before executing
-# any action. The dedicated DEB compatibility test intentionally creates DEBs;
-# keep it in the test suite and audit the ordinary production graph separately.
+if [[ "$cpu" == x86_64 ]]; then
+  tests+=(//tools/build_tools:p4rt_owner_tools_test)
+fi
+# Audit every selected runtime target before execution. Only the explicit
+# deb-fixtures suite adds the dedicated package-producing analysis test; its
+# outputs are outside this no-DEB runtime audit. The full kernel fixture creates
+# packages inside TestRunner, so the suite selection also gates that test body.
 printf '%s\n' "${tests[@]}" "${outputs[@]}" > "$artifacts/targets.txt"
 audit_tests=()
 for target in "${tests[@]}"; do
@@ -176,11 +184,11 @@ for target in "${tests[@]}"; do
   fi
 done
 "${bazel_cmd[@]}" aquery "${flags[@]}" --output=jsonproto \
-  "deps(set(${audit_tests[*]} ${outputs[*]}))" > "$artifacts/actions.json"
+  "deps(set(${audit_tests[*]} ${outputs[*]}))" > "$raw/actions.json"
 apt_python_tests=(//apt:dependencies_test //apt:selection_test //apt:inputs_test //apt/tests/integration:adapter_test //apt/tests/integration:overlap_test)
 apt_python_flags=("${flags[@]}" --@rules_python//python/config_settings:python_version=3.13)
 "${bazel_cmd[@]}" aquery "${apt_python_flags[@]}" --output=jsonproto \
-  "deps(set(${apt_python_tests[*]}))" > "$artifacts/apt-python313-actions.json"
+  "deps(set(${apt_python_tests[*]}))" > "$raw/apt-python313-actions.json"
 # Explicitly exercise the individual APT library/header exports on Bookworm.
 # The same native CPU uses Trixie execution tools and a Bookworm target ABI.
 bookworm_tests=(//cc/tests/header_includes:headers_link_test
@@ -189,8 +197,8 @@ bookworm_tests=(//cc/tests/header_includes:headers_link_test
 bookworm_flags=("${flags[@]}" --platforms="//platforms:${cpu}_bookworm")
 printf '%s\n' "${bookworm_tests[@]}" > "$artifacts/bookworm-targets.txt"
 "${bazel_cmd[@]}" aquery "${bookworm_flags[@]}" --output=jsonproto \
-  "deps(set(${bookworm_tests[*]}))" > "$artifacts/bookworm-actions.json"
-python3 - "$artifacts" <<'PYTHON'
+  "deps(set(${bookworm_tests[*]}))" > "$raw/bookworm-actions.json"
+python3 - "$raw" "$artifacts" <<'PYTHON'
 import collections, json, re, sys
 from pathlib import Path
 root = Path(sys.argv[1])
@@ -214,33 +222,30 @@ for filename in ('actions.json', 'apt-python313-actions.json', 'bookworm-actions
                    mnemonics=dict(collections.Counter(item['mnemonic'] for item in actions)),
                    deb_outputs=[name for name in outputs if name.endswith('.deb')],
                    packaging_wrappers=forbidden)
-    (root / filename.replace('actions.json', 'action-audit.json')).write_text(json.dumps(receipt, indent=2) + '\n')
+    (Path(sys.argv[2]) / filename.replace('actions.json', 'action-audit.json')).write_text(json.dumps(receipt, indent=2) + '\n')
     assert not receipt['deb_outputs'] and not forbidden, receipt
 PYTHON
-if [[ "$cpu" == x86_64 ]]; then
-  tests+=(//tools/build_tools:p4rt_owner_tools_test)
-fi
 "${bazel_cmd[@]}" test "${flags[@]}" --nocache_test_results --test_output=errors \
-  --build_event_json_file="$artifacts/tests.bep.json" "${tests[@]}"
+  --build_event_json_file="$raw/tests.bep.json" "${tests[@]}"
 # Include external test labels and their canonical repository paths in artifacts.
 cp -aL bazel-testlogs "$artifacts/testlogs"
 # Verify target-aware archive stripping with AMD64 execution and ARM64 inputs.
 # The checker runs on the host; no ARM64 program executes in this action.
 if [[ "$cpu" == x86_64 ]]; then
   "${bazel_cmd[@]}" build "${flags[@]}" --platforms=//platforms:aarch64_trixie \
-    --build_event_json_file="$artifacts/strip-static-archive-cross.bep.json" \
+    --build_event_json_file="$raw/strip-static-archive-cross.bep.json" \
     //binary/tests:strip_static_archive_check
   cp bazel-bin/binary/tests/strip_static_archive_check.json \
     "$artifacts/strip-static-archive-cross.json"
 fi
 # The image consumer runs Python 3.13; retain its separate hub/runfiles proof.
 "${bazel_cmd[@]}" test "${apt_python_flags[@]}" --nocache_test_results --test_output=errors \
-  --build_event_json_file="$artifacts/apt-python313-tests.bep.json" "${apt_python_tests[@]}"
+  --build_event_json_file="$raw/apt-python313-tests.bep.json" "${apt_python_tests[@]}"
 cp -aL bazel-testlogs "$artifacts/apt-python313-testlogs"
 "${bazel_cmd[@]}" test "${bookworm_flags[@]}" --nocache_test_results --test_output=errors \
-  --build_event_json_file="$artifacts/bookworm-tests.bep.json" "${bookworm_tests[@]}"
+  --build_event_json_file="$raw/bookworm-tests.bep.json" "${bookworm_tests[@]}"
 cp -aL bazel-testlogs "$artifacts/bookworm-testlogs"
-"${bazel_cmd[@]}" build "${flags[@]}" --build_event_json_file="$artifacts/build.bep.json" "${outputs[@]}"
+"${bazel_cmd[@]}" build "${flags[@]}" --build_event_json_file="$raw/build.bep.json" "${outputs[@]}"
 ./bazel-bin/tests/hello
 ./bazel-bin/tests/hello_cpp
 mkdir -p "$artifacts/outputs"
@@ -271,7 +276,7 @@ if [[ -f tests/shared_api_consumer/MODULE.bazel ]]; then
       done
     done
     "${bazel_cmd[@]}" test "${resolution[@]}" --jobs=4 --nocache_test_results --test_output=errors \
-      --build_event_json_file="$artifacts/shared-api.bep.json" "${fixture_tests[@]}"
+      --build_event_json_file="$raw/shared-api.bep.json" "${fixture_tests[@]}"
     if "${bazel_cmd[@]}" query "${resolution[@]}" @unsafe//:files > "$artifacts/unsafe-sysroot.log" 2>&1; then
       echo 'Unsafe archive was unexpectedly accepted' >&2; exit 1
     fi
@@ -297,7 +302,7 @@ fi
   cd tests/runtime_lock_uv_consumer
   "${bazel_cmd[@]}" test "${resolution[@]}" --jobs=4 --test_output=errors \
     --override_module="sonic-build-infra=$root" \
-    --build_event_json_file="$artifacts/runtime-lock-resolver.bep.json" \
+    --build_event_json_file="$raw/runtime-lock-resolver.bep.json" \
     //:real_resolver_test
   mkdir -p "$artifacts/tests/runtime-lock-resolver"
   cp bazel-testlogs/real_resolver_test/test.xml bazel-testlogs/real_resolver_test/test.log \

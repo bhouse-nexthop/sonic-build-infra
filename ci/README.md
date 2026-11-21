@@ -10,7 +10,8 @@ Bazel 8.5.1, a C/C++ compiler, binutils, GDB, Git, Python, tar and xz installed.
 Local builds and both native CI workflows use `sonic-bazel-registry/main`
 and the Bazel Central Registry. The checked-in module versions and canonical
 APT lock preserve package checksums and native header/library exports.
-Run the same source suite locally with:
+Automatic PR and `master` checks select the maintained `tar-runtime` suite.
+Run that same source suite locally with:
 
 ```sh
 bash ci/bazel-ci.sh
@@ -83,11 +84,20 @@ creation. It compiles and runs native C/C++ host programs, checks the ordinary
 deployment interpreter, and, on ARM64, compiles an ARM32 compatibility
 vDSO probe. These checks create no DEB packages or kernel image.
 
-Each run retains test XML/logs, build events, native host metadata, revision,
+Each run publishes an explicit allowlist of test XML/logs, typed action/cache
+receipts, native host metadata, revision,
 resolved module locks, the APT lock and its source/request inputs, sample
 executables, and their runtime/debug deployment tars. Successful runs include
 checksums in `provenance.json`. Download the architecture-specific artifact from the Actions run page. Partial evidence is
-retained when a validation step fails.
+retained when a validation step fails. Raw Bazel build events, action graphs and
+execution logs are private job diagnostics: they may contain process environment
+or command-line data and are never uploaded. General, declared-tool and Rust
+raw records live under the job's temporary directory; sysroot diagnostic graphs
+remain in the private staging directory and are excluded by the same explicit
+upload allowlist. The cross-runner artifact contains only its manifest, selected
+programs and declared runtime. `ci/tests/evidence_test.py` exercises the actual
+workflow allowlists with synthetic command/environment secrets, while retaining
+the typed cache proof, test results and runtime outputs needed for review.
 
 The installed deployment-tar check verifies the complete runtime file set,
 payload ownership and modes, declared data bytes, native ELF architecture,
@@ -95,10 +105,39 @@ execution of the extracted program, matching build IDs, debuglink checksum,
 and GDB source-line lookup through the extracted debug tree. Its report is
 retained as `deploy-archives.json` alongside both archives.
 
-CI selects runtime/debug tar outputs directly. The separate Debian-control
-workflow is removed so source PRs do not create fixture DEBs. Legacy Debian
-rules and fixtures remain available for explicitly authorized DEB validation;
-they are outside the automatic source CI selections.
+CI selects runtime/debug TAR outputs directly. `ci/suites.sh` shares the suite
+selection between the source and declared-tool workflows. Their manual dispatch
+input `suite` accepts `tar-runtime` (the default) or `deb-fixtures`; unknown values
+fail before Bazel runs. The existing check names, AMD64/ARM64 matrices, cross
+execution and cross-host comparison gates are unchanged. `suite.json` and the
+job summary state which scope was selected. A passing runtime suite does not
+claim that generated-package fixtures passed.
+
+The runtime suite uses the existing `kernel_runtime_tools_test`, preserving its
+compiler, interpreter, packaging-module and shared-library dependency checks.
+The declared-tool workflow also reruns that test from a fresh Bazel output root
+and requires both prepared runtime kinds to be disk-cache hits. Reading original
+DEBs, testing control metadata, and compiling the AMD64-to-ARM64/ARMHF probes
+remain in this suite; none generates a DEB.
+
+The explicit `deb-fixtures` suite retains the runtime coverage and adds package
+generation: the source workflow selects `hello_deb_optional_fields_build_test`
+(four optional-field fixtures), and both workflows use the full
+`kernel_runtime_test` (`kernel-tools-check` and its debug package). The declared
+tool workflow preserves that full test in both initial and restored-cache runs.
+These existing tests and their assertions are unchanged. Request this scope
+explicitly when DEB generation is authorized, either through the corresponding
+workflow's manual `suite` input or locally with:
+
+```sh
+SONIC_BAZEL_CI_SUITE=deb-fixtures bash ci/bazel-ci.sh
+```
+
+The configured-action audits still check the entire selected runtime graph,
+including the P4 owner tools. Only the explicitly requested optional-field DEB
+fixture is outside the ordinary no-DEB graph audit. The kernel package test
+creates its DEBs inside the test process, so the explicit suite selection also
+gates that behavior; an action-output audit alone cannot detect it.
 
 Both architecture checks must be required on the PR target branch. Repository
 settings enforce this separately from the workflow; skipped or missing jobs
