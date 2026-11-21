@@ -5,7 +5,6 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
-import struct
 import subprocess
 import tarfile
 import tempfile
@@ -13,7 +12,7 @@ import tempfile
 from debian.deb822 import Deb822
 from debian.debian_support import Version
 
-ARCHITECTURES = {'amd64': 62, 'arm64': 183, 'armhf': 40}
+ARCHITECTURES = ('amd64', 'arm64', 'armhf')
 SCRIPTS = {'preinst', 'postinst', 'prerm', 'postrm', 'config'}
 RESERVED = {'control', 'md5sums', 'debian-binary'}
 
@@ -98,11 +97,11 @@ def summarize(data, architecture):
                 require(stream is not None, 'missing file bytes: ' + name)
                 with stream:
                     first = stream.read(20)
+                    # Architecture describes the package, not every ELF payload:
+                    # kernels include compatibility VDSOs for other ABIs.
                     if first.startswith(b'\x7fELF'):
                         require(len(first) == 20 and first[5] in (1, 2), 'invalid ELF header: ' + name)
-                        machine = struct.unpack(('<' if first[5] == 1 else '>') + 'H', first[18:20])[0]
                         require(architecture != 'all', 'Architecture: all contains target ELF: ' + name)
-                        require(machine == ARCHITECTURES[architecture], 'ELF architecture mismatch: ' + name)
                     digest = hashlib.md5(first)
                     for block in iter(lambda: stream.read(1024 * 1024), b''):
                         digest.update(block)

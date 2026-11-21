@@ -7,6 +7,7 @@ inspect archive semantics, not the directory insertion algorithm.
 """
 import hashlib
 import io
+import struct
 from pathlib import Path
 import tarfile
 import tempfile
@@ -71,6 +72,28 @@ class PayloadTest(unittest.TestCase):
             self.assertEqual(sums, digest + '  usr/lib/debug/.build-id/symbols\n' +
                              digest + '  usr/lib/debug/alias\n')
 
+    def test_kernel_compatibility_elf_payloads_preserve_checksums(self):
+        # Kernel debug packages contain native and compat VDSOs. The package
+        # Architecture remains native; ELF e_machine is not a package invariant.
+        for architecture, machines in [('amd64', (62, 3)), ('arm64', (183, 40))]:
+            with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as temporary:
+                source = Path(temporary) / 'data.tar'
+                payloads = {}
+                with tarfile.open(source, 'w') as archive:
+                    for index, machine in enumerate(machines):
+                        content = bytearray(64)
+                        content[:7] = b'\x7fELF' + bytes((2 if index == 0 else 1, 1, 1))
+                        struct.pack_into('<H', content, 18, machine)
+                        name = 'usr/lib/debug/vdso-{}.so'.format(machine)
+                        payloads[name] = bytes(content)
+                        member = tarfile.TarInfo(name)
+                        member.size = len(content)
+                        archive.addfile(member, io.BytesIO(content))
+                _, installed_size, sums = summarize(source, architecture)
+                self.assertEqual(installed_size, 2)
+                self.assertEqual(sums, ''.join(hashlib.md5(content).hexdigest() + '  ' + name + '\n'
+                                             for name, content in sorted(payloads.items())))
+
     def test_missing_parents_get_default_metadata(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / 'source.tar'
@@ -90,6 +113,13 @@ class PayloadTest(unittest.TestCase):
 
 
 class ControlTest(unittest.TestCase):
+    def test_package_architecture_must_match_target_platform(self):
+        for architecture, target in [('amd64', 'arm64'), ('arm64', 'amd64')]:
+            with self.subTest(architecture=architecture):
+                fields = ['Package=example', 'Version=1.0', 'Architecture=' + architecture]
+                with self.assertRaisesRegex(ValueError, 'control architecture differs from target platform'):
+                    assemble(SimpleNamespace(control=None, field=fields, target_architecture=target))
+
     def test_finalized_control_requires_descriptive_fields(self):
         # Compatibility for the scalar API must not relax finalized controls.
         fields = {'Package': 'example', 'Version': '1.0', 'Architecture': 'amd64',
