@@ -1,5 +1,6 @@
 """Rule to wrap tar(), which ensures binaries are stripped, and creates tars with debug symbols"""
 
+load("@bazel_lib//lib:expand_template.bzl", "expand_template")
 load("@bazel_lib//lib:utils.bzl", "propagate_common_rule_attributes")
 load("@tar.bzl//tar:tar.bzl", "tar", "tar_rule")
 load("//binary:debug_symbols.bzl", "DebugSymbolsInfo")
@@ -33,7 +34,7 @@ _runtime_tar = rule(
     },
 )
 
-def _sonic_deploy_tar_impl(name, force_debug_build, preserve_install_rpath, compress_debug_sections, install_rpath, binaries = {}, srcs = [], mtree = [], debug_symlinks = {}, **kwargs):
+def _sonic_deploy_tar_impl(name, force_debug_build, preserve_install_rpath, compress_debug_sections, install_rpath, binaries = {}, srcs = [], mtree = [], debug_symlinks = {}, mtree_substitutions = {}, **kwargs):
     # Symbolic macros supply None for omitted common attributes.
     # Legacy tar/expand_template macros require a concrete tags sequence.
     kwargs["tags"] = kwargs.get("tags") or []
@@ -79,10 +80,33 @@ def _sonic_deploy_tar_impl(name, force_debug_build, preserve_install_rpath, comp
     # and attaches DebugSymbolsInfo.
     rttar_kwargs = dict(kwargs)
     rttar_kwargs.pop("visibility", None)
+    # Resolve declared file locations before configurable installation paths.
+    # Both expansions operate on the manifest; payloads are archived only once.
+    source_mtree = name + "_rttar_mtree"
+    expand_template(
+        name = source_mtree,
+        out = source_mtree + ".txt",
+        data = srcs + stripped_targets,
+        template = ["#mtree", "{content}", ""],
+        substitutions = {"{content}": "\n".join(mtree + binary_mtree)},
+        stamp = rttar_kwargs.get("stamp", 0),
+        visibility = ["//visibility:private"],
+        **propagate_common_rule_attributes(rttar_kwargs)
+    )
+    install_mtree = name + "_install_mtree"
+    expand_template(
+        name = install_mtree,
+        out = install_mtree + ".txt",
+        template = ":" + source_mtree,
+        substitutions = mtree_substitutions,
+        stamp = rttar_kwargs.get("stamp", 0),
+        visibility = ["//visibility:private"],
+        **propagate_common_rule_attributes(rttar_kwargs)
+    )
     tar(
         name = name + "_rttar",
         srcs = srcs + stripped_targets,
-        mtree = mtree + binary_mtree,
+        mtree = ":" + install_mtree,
         visibility = ["//visibility:private"],
         **rttar_kwargs
     )
@@ -127,6 +151,10 @@ It produces two targets:
             default = [],
             configurable = False,
             doc = "Mtree entries; tar.bzl supplies default_mtime where neither the entry nor an inherited /set value supplies a timestamp.",
+        ),
+        "mtree_substitutions": attr.string_dict(
+            default = {},
+            doc = "Configured text substitutions for installation paths and symlink destinations in the manifest. File locations are expanded first; binary inputs and the archive are not rewritten.",
         ),
         "default_mtime": attr.string(
             default = "1672560000",

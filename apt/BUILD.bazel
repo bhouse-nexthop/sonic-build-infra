@@ -52,6 +52,7 @@ py_test(
     ],
     imports = ["."],
     main = "tests/lock_test.py",
+    data = ["tests/testdata/new-provider-alias-export.json"],
 )
 
 py_test(

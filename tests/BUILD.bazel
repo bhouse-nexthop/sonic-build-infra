@@ -236,6 +236,51 @@ assert_stripped(
 #   sonic_deploy_tar tests  #
 #############################
 
+config_setting(
+    name = "configured_install_debug",
+    values = {"compilation_mode": "dbg"},
+)
+
+# Installation paths are configured without changing the payload producers.
+sonic_deploy_tar(
+    name = "configured_install_tar",
+    srcs = ["//tests/testdata:file.txt"],
+    binaries = {
+        "{LIBDIR}/hello uid=0 gid=0 mode=0755 time=17 type=file": ":hello",
+    },
+    force_debug_build = True,
+    mtree = [
+        "{LIBDIR}/data.txt type=file uid=0 gid=0 mode=0644 time=19 content=$(location //tests/testdata:file.txt)",
+        "usr/bin/hello type=link uid=0 gid=0 mode=0777 time=23 link=../../{LIBDIR}/hello",
+    ],
+    mtree_substitutions = select({
+        ":configured_install_debug": {"{LIBDIR}": "usr/lib/debug-layout"},
+        "//conditions:default": {"{LIBDIR}": "usr/lib/normal-layout"},
+    }),
+)
+
+py_test(
+    name = "configured_install_paths_test",
+    srcs = ["configured_install_paths_test.py"],
+    args = [
+        "$(location :configured_install_tar)",
+        "$(location :configured_install_tar.debug_symbols)",
+        "$(location :hello_deploy_expected_stripped)",
+        "$(location :timestamp_deploy_tar.debug_symbols)",
+        "$(location //tests/testdata:file.txt)",
+    ] + select({
+        ":configured_install_debug": ["usr/lib/debug-layout"],
+        "//conditions:default": ["usr/lib/normal-layout"],
+    }),
+    data = [
+        ":configured_install_tar",
+        ":configured_install_tar.debug_symbols",
+        ":hello_deploy_expected_stripped",
+        ":timestamp_deploy_tar.debug_symbols",
+        "//tests/testdata:file.txt",
+    ],
+)
+
 sonic_deploy_tar(
     name = "timestamp_deploy_tar",
     srcs = ["//tests/testdata:file.txt"],

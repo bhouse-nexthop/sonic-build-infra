@@ -170,8 +170,13 @@ def extract(path, destination, tar):
                 require(resolved.is_relative_to(destination), "runtime TAR symlink escapes package")
 
 
-def elf_files(root, architecture):
-    files = []
+def elf_inventory(root, architecture, role="runtime", symbols_excludes=(), shlibdeps_excludes=()):
+    """Inspect every ELF; source objects/fixtures remain audited payload data.
+
+    Debian Dh_Lib::excludefile quotes -X arguments, so these are literal
+    substrings of the installed relative path, not globs or regexes.
+    """
+    inventory = {}
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or not path.is_file() or "DEBIAN" in path.relative_to(root).parts:
             continue
@@ -182,10 +187,27 @@ def elf_files(root, architecture):
         require(len(header) == 20 and header[5] in (1, 2), "invalid runtime ELF header")
         endian = "<" if header[5] == 1 else ">"
         kind, machine = struct.unpack_from(endian + "HH", header, 16)
-        require(machine == ARCHITECTURES[architecture], "runtime ELF differs from selected target architecture")
-        if kind in (2, 3):
-            files.append(path)
-    return files
+        relative = str(path.relative_to(root))
+        symbols = not any(term in relative for term in symbols_excludes)
+        shlibdeps = not any(term in relative for term in shlibdeps_excludes)
+        if role == "source" and kind == 1:  # ELF ET_REL source/linker input.
+            purpose = "source_object"
+        elif role == "source" and not symbols and not shlibdeps:
+            purpose = "source_fixture"
+        else:
+            require(machine == ARCHITECTURES[architecture], "runtime ELF differs from selected target architecture")
+            require(role != "source", "source package contains an ELF outside its declared data selection: " + relative)
+            purpose = "runtime" if kind in (2, 3) else "object"
+        inventory[relative] = {"type": kind, "machine": machine, "role": purpose,
+                               "sha256": sha(path),
+                               "symbols": purpose == "runtime" and symbols,
+                               "shlibdeps": purpose == "runtime" and shlibdeps}
+    return inventory
+
+
+def elf_files(root, architecture):
+    return [root / path for path, item in elf_inventory(root, architecture).items()
+            if item["role"] == "runtime"]
 
 
 def finish_analysis_tree(root):
@@ -280,7 +302,18 @@ def dependency_records(directories, architecture):
             root = directory / relative
             require(sha(root / "DEBIAN/control") == item["control_sha256"],
                     "dependency control changed after generation")
-            records.append(package_record(root, item["kind"], item["payload_sha256"]))
+            record = package_record(root, item["kind"], item["payload_sha256"])
+            record["role"] = item.get("package_role", "runtime")
+            require(record["role"] in ("runtime", "source"), "invalid dependency package role")
+            if record["role"] == "source":
+                for relative, data in item.get("elf_inventory", {}).items():
+                    path = PurePosixPath(relative)
+                    require(not path.is_absolute() and ".." not in path.parts,
+                            "unsafe dependency ELF inventory path")
+                    require(data.get("role") in ("source_object", "source_fixture") and
+                            sha(root / relative) == data.get("sha256"),
+                            "source ELF data changed after generation")
+            records.append(record)
     return records
 
 
@@ -369,7 +402,8 @@ def helper_substitutions(dpkg, name, root, fields, debian, provided, control_fil
 
 
 def generate(*, control, changelog, module, architecture, tools, tar, output, tree,
-             packages, dependencies=(), apt_packages=(), symbols=None, substvars=None, debian_files=None, required_paths=None, final_controls=None, control_file_helpers=(), control_file_helpers_by_package=None, shlibdeps=True, symbols_check_level=1):
+             packages, dependencies=(), apt_packages=(), symbols=None, substvars=None, debian_files=None, required_paths=None, final_controls=None, control_file_helpers=(), control_file_helpers_by_package=None, shlibdeps=True, symbols_check_level=1,
+             symbols_excludes=None, shlibdeps_excludes=None, package_roles=None):
     allowed_helpers = {"dh_systemd_enable", "dh_installinit", "dh_systemd_start", "dh_installmenu", "dh_makeshlibs",
                        "dh_installsystemd", "dh_installudev", "dh_installinitramfs", "dh_python3", "dh_installdeb"}
     control_file_helpers_by_package = control_file_helpers_by_package or {}
@@ -384,6 +418,16 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
         if commands:
             require(commands[-1][0] == "dh_installdeb",
                     "control-file helpers must finish with dh_installdeb")
+    symbols_excludes, shlibdeps_excludes = symbols_excludes or {}, shlibdeps_excludes or {}
+    package_roles = package_roles or {}
+    for mapping in (symbols_excludes, shlibdeps_excludes):
+        require(isinstance(mapping, dict) and set(mapping) <= set(packages) and
+                all(isinstance(terms, list) and terms and
+                    all(isinstance(term, str) and term for term in terms)
+                    for terms in mapping.values()), "invalid per-package ELF exclusions")
+    require(isinstance(package_roles, dict) and set(package_roles) <= set(packages) and
+            all(role in ("runtime", "source") for role in package_roles.values()),
+            "invalid per-package ELF role")
     source, stanzas, version = source_definition(control, changelog)
     require(module and set(packages) <= set(stanzas), "runtime package mapping differs from Debian control")
     require(packages, "runtime package mapping is empty")
@@ -445,24 +489,39 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
                 validate_required_paths(payload, required_paths[name], architecture, name)
             require(not (root / "DEBIAN").exists(), "runtime TAR unexpectedly contains Debian control files")
             (root / "DEBIAN").mkdir()
-            native = elf_files(root, architecture)
+            role = package_roles.get(name, "runtime")
+            inventory = elf_inventory(root, architecture, role,
+                                      symbols_excludes.get(name, ()), shlibdeps_excludes.get(name, ()))
+            native = [root / path for path, data in inventory.items() if data["role"] == "runtime"]
+            symbol_files = [root / path for path, data in inventory.items() if data["symbols"]]
+            dependency_files = [root / path for path, data in inventory.items() if data["shlibdeps"]]
             # Generate actual source library symbol metadata before calculating
             # any package's dependencies; sibling packages may depend on it.
-            args = ["-p" + name, "-v" + version, "-a" + architecture, "-P" + str(root),
+            # With an empty explicit selection dpkg-gensymbols would otherwise
+            # scan -P automatically. An empty private scan root still compares
+            # the unchanged reference, so c4 detects disappeared libraries.
+            symbol_root = root
+            if not symbol_files and name in symbols:
+                symbol_root = scratch / "empty-symbols" / name
+                symbol_root.mkdir(parents=True)
+            args = ["-p" + name, "-v" + version, "-a" + architecture, "-P" + str(symbol_root),
                     "-O" + str(root / "DEBIAN/symbols"), "-c" + str(symbols_check_level)]
             if name in symbols:
                 args.append("-I" + str(symbols[name]))
-            if native:
-                dpkg.run("dpkg-gensymbols", *args, *("-e" + str(path) for path in native))
+            if symbol_files or name in symbols:
+                dpkg.run("dpkg-gensymbols", *args, *("-e" + str(path) for path in symbol_files))
             fields = dict(generated_stanzas[name], Version=version,
                           Architecture="all" if generated_stanzas[name]["Architecture"] == "all" else architecture)
             # The early control gives dpkg-shlibdeps package identity. Its final
             # dependency fields are produced below by dpkg-gencontrol.
             (root / "DEBIAN/control").write_text(Deb822(fields).dump())
             own[name] = {"name": name, "root": root, "fields": fields, "kind": "source",
-                         "payload_sha256": sha(payload), "label": label, "native": native}
+                         "payload_sha256": sha(payload), "label": label, "native": native,
+                         "dependency_files": dependency_files, "role": role, "elf_inventory": inventory}
         selected.update(own)
-        roots = [item["root"] for _, item in sorted(selected.items())]
+        # Explicit source data never enters target-library search, including
+        # RPATH authorization. Its complete staging tree remains in the provider.
+        roots = [item["root"] for _, item in sorted(selected.items()) if item.get("role", "runtime") == "runtime"]
         # A Bazel input tree may materialize each file as a symlink into the
         # cached output. Authorize those declared files' real parent paths as
         # well as the package roots; do not authorize unrelated RPATH entries.
@@ -501,10 +560,10 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
                     "shlibs substitutions must be computed from the runtime payload")
             shlibs_fields = sorted({variable[7:] for value in generated_stanzas[name].values()
                                     for variable in VARIABLE.findall(value) if variable.startswith("shlibs:")})
-            if shlibdeps and record["native"]:
+            if shlibdeps and record["dependency_files"]:
                 shlibs_args = []
                 for field in shlibs_fields:
-                    shlibs_args.extend(["-d" + field, *("-e" + str(path) for path in record["native"])])
+                    shlibs_args.extend(["-d" + field, *("-e" + str(path) for path in record["dependency_files"])])
                 data = dpkg.run("dpkg-shlibdeps", "-O", "-x" + name,
                                 "--admindir=" + dpkg.environment["DPKG_ADMINDIR"],
                                 *search, *shlibs_args)
@@ -533,6 +592,12 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
             result[name] = {"runtime_target": record["label"],
                             "control_fields": {key: value for key, value in fields.items() if key not in INSTALLED_FIELDS - {"Architecture"}},
                             "payload_sha256": record["payload_sha256"]}
+            result[name]["package_role"] = record["role"]
+            result[name]["elf_inventory"] = record["elf_inventory"]
+            if name in symbols_excludes:
+                result[name]["symbols_excludes"] = symbols_excludes[name]
+            if name in shlibdeps_excludes:
+                result[name]["shlibdeps_excludes"] = shlibdeps_excludes[name]
             if not shlibdeps:
                 result[name]["shlibdeps"] = False
                 result[name]["elf_needed"] = {str(path.relative_to(record["root"])): Elf(path.read_bytes()).needed for path in record["native"]}
@@ -554,7 +619,9 @@ def generate(*, control, changelog, module, architecture, tools, tar, output, tr
         manifest = {"schema": 1, "architecture": architecture, "packages": [
             {"root": str(item["root"].relative_to(tree)), "kind": item["kind"],
              "payload_sha256": item["payload_sha256"], "control_sha256": sha(item["root"] / "DEBIAN/control"),
-             "omitted_analysis_links": finish_analysis_tree(item["root"])}
+             "omitted_analysis_links": finish_analysis_tree(item["root"]),
+             "package_role": item.get("role", "runtime"),
+             "elf_inventory": item.get("elf_inventory", {})}
             for item in [*apt_records, *own.values()]
         ]}
         (tree / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
@@ -601,6 +668,9 @@ def main():
     for name in ("package", "dependency", "apt-package", "symbols", "substvars", "merge", "debian-file", "required-path", "final-control", "control-file-helper"):
         parser.add_argument("--" + name, action="append", default=[])
     parser.add_argument("--symbols-check-level", type=int, choices=range(5), default=1)
+    parser.add_argument("--symbols-excludes", default="{}")
+    parser.add_argument("--shlibdeps-excludes", default="{}")
+    parser.add_argument("--package-roles", default="{}")
     parser.add_argument("--no-shlibdeps", action="store_true", help="Original source recipe explicitly skips dh_shlibdeps")
     parser.add_argument("--control-file-helpers-by-package", default="{}")
     args = parser.parse_args()
@@ -628,7 +698,9 @@ def main():
              symbols=named_paths(args.symbols), substvars=named_paths(args.substvars),
              debian_files=named_paths(args.debian_file),
              control_file_helpers=[json.loads(value) for value in args.control_file_helper],
-             control_file_helpers_by_package=json.loads(args.control_file_helpers_by_package), shlibdeps=not args.no_shlibdeps, symbols_check_level=args.symbols_check_level)
+             control_file_helpers_by_package=json.loads(args.control_file_helpers_by_package), shlibdeps=not args.no_shlibdeps, symbols_check_level=args.symbols_check_level,
+             symbols_excludes=json.loads(args.symbols_excludes), shlibdeps_excludes=json.loads(args.shlibdeps_excludes),
+             package_roles=json.loads(args.package_roles))
 
 
 if __name__ == "__main__":

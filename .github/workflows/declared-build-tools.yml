@@ -114,6 +114,10 @@ jobs:
                  '--remote_download_regex=(^|.*/)tools/build_tools/kernel_runtime_(amd64|arm64)(/.*)?$' \
                  --repository_cache="$RUNNER_TEMP/configure-tools-repository-cache" \
                  --disk_cache="$RUNNER_TEMP/configure-tools-cache" --lockfile_mode=update)
+          python_build_tools=()
+          if [[ "$ARCHITECTURE" == amd64 ]]; then
+            python_build_tools+=(//tools/build_tools:dtrace //tools/build_tools:python_pgo_runtime)
+          fi
           bazel --ignore_all_rc_files build "${flags[@]}" \
             --build_event_json_file="$CI_RAW_DIR/build-events.jsonl" \
             //tools/build_tools:aspell //tools/build_tools:doxygen \
@@ -123,7 +127,7 @@ jobs:
             //tools/build_tools:autoconf //tools/build_tools:autoheader //tools/build_tools:autom4te \
             //tools/build_tools:patchelf //tools/build_tools:gawk //tools/build_tools:swig \
             //tools/build_tools:patch //tools/build_tools:xmllint //tools/build_tools:xsltproc \
-            //tools/build_tools:launcher_action_check 2>&1 | tee ci-artifacts/build.log
+            //tools/build_tools:launcher_action_check "${python_build_tools[@]}" 2>&1 | tee ci-artifacts/build.log
           cp bazel-bin/tools/build_tools/launcher_action_check.json ci-artifacts/
           worker_tests=()
           if [[ "$ARCHITECTURE" == amd64 ]]; then

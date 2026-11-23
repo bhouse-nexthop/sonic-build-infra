@@ -1,5 +1,16 @@
 # Deterministic tar packages
 
+`sonic_deploy_tar(mtree_substitutions = ...)` accepts a configurable string
+dictionary for installation paths and symlink destinations. Keep `srcs`,
+`binaries`, and the manifest as one static declaration, put a token such as
+`{DEB_HOST_MULTIARCH}` in destination paths, and select its replacement from the
+target platform. Declared file locations are expanded first, followed by the
+configured text substitutions. The original payloads are then archived once;
+ELF contents, debug splitting, and the build-id symbol archive are unchanged.
+The default dictionary is empty and preserves existing installation paths.
+`//tests:configured_install_paths_test` exercises two selected layouts with the
+same inputs, including binary bytes, file metadata, links, and symbol contents.
+
 `debug_symbols_tar` builds an installation mtree from the original symbol files
 and trees, then invokes `tar.bzl` once to produce an uncompressed `.tar` in every
 compilation mode. Both component packages and OCI debug layers use this path.

@@ -2760,6 +2760,62 @@
         "trixie-updates",
         "trixie-security"
       ]
+    },
+    "python_build_deps": {
+      "include_transitive": true,
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ],
+      "packages": [
+        "systemtap-sdt-dev:amd64",
+        "libbluetooth-dev:amd64",
+        "libgdbm-dev:amd64",
+        "tk-dev:amd64",
+        "blt-dev:amd64",
+        "libffi-dev:amd64",
+        "libsqlite3-dev:amd64",
+        "libbz2-dev:amd64",
+        "libexpat1-dev:amd64",
+        "liblzma-dev:amd64",
+        "systemtap-sdt-dev:arm64",
+        "libbluetooth-dev:arm64",
+        "libgdbm-dev:arm64",
+        "tk-dev:arm64",
+        "blt-dev:arm64",
+        "libffi-dev:arm64",
+        "libsqlite3-dev:arm64",
+        "libbz2-dev:arm64",
+        "libexpat1-dev:arm64",
+        "liblzma-dev:arm64"
+      ]
+    },
+    "python_build_tools_debian": {
+      "include_transitive": true,
+      "suites": [
+        "trixie",
+        "trixie-updates",
+        "trixie-security"
+      ],
+      "packages": [
+        "systemtap-sdt-dev:amd64",
+        "dash:amd64",
+        "coreutils:amd64",
+        "sed:amd64",
+        "grep:amd64",
+        "util-linux:amd64",
+        "locales-all:amd64",
+        "tzdata:amd64",
+        "netbase:amd64",
+        "media-types:amd64",
+        "libgpm2:amd64",
+        "net-tools:amd64",
+        "bzip2:amd64",
+        "time:amd64",
+        "python3-pip-whl:amd64",
+        "python3-setuptools-whl:amd64"
+      ]
     }
   },
   "pinned_packages": [

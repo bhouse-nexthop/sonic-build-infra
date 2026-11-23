@@ -123,6 +123,7 @@ tests=(
   //tools/build_tools:elf_runtime_test
   //tools/build_tools:manual_runtime_test
   //tests:deploy_tar_timestamps_test
+  //tests:configured_install_paths_test
   //toolchains/gcc/tests:foreign_link_test
   //cc/tests:transitive_runtime_test
   //cc/tests:shared_library_layout_test

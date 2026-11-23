@@ -138,7 +138,7 @@ def validate_collection_versions(document):
                 pending.extend(package["depends_on"])
 
 
-def validate_lock(document):
+def _validate_lock_structure(document):
     if document.get("version") != 2:
         raise ValueError("APT lock must have version 2")
     for name in ("sources", "packages", "dependency_sets"):
@@ -167,7 +167,161 @@ def validate_lock(document):
         if not isinstance(files, list) or any(not isinstance(path, str) for path in files):
             raise ValueError("invalid package file mapping: " + key)
     reachable(document)
+
+
+def validate_lock(document):
+    _validate_lock_structure(document)
     validate_collection_versions(document)
+
+
+def reuse_locked_aliases(candidate, previous, requests):
+    """Reuse one reviewed binary identity for same-content new-root aliases.
+
+    The resolver can retain a virtual provider from one suite while selecting
+    its concrete name from another. Version equality alone is insufficient:
+    identical DEB bytes and a complete in-scope graph are required.
+    Previously reviewed records retain priority. For the fixed Distroless
+    exporter, a new duplicate may reuse its unique closed dependency graph
+    only when that graph strictly contains every other same-content graph.
+    Existing roots and records are never rewritten by the alias mapping.
+    """
+    _validate_lock_structure(candidate)
+    validate_lock(previous)
+    result = deepcopy(candidate)
+    packages = result["packages"]
+    old_packages = previous["packages"]
+    aliases, additions, authoritative, existing = {}, set(), set(), set()
+    closures, walks = {}, {}
+    # Distroless's virtual-provider map can retain an earlier origin while
+    # concrete resolution expands another same-content record (extensions.bzl
+    # add_package/add_package_dependency). This is an exporter contract, not
+    # an assumption that empty dependency lists mark aliases. Require complete
+    # extraction identity and a unique strict graph authority, never suite order.
+    content_groups = {}
+    for key, record in packages.items():
+        if not all(field in record for field in ("size", "section", "files")):
+            continue
+        identity = tuple(record[field] for field in ("name", "architecture", "version", "sha256", "size", "section")) + (tuple(record["files"]),)
+        # Architecture: all bytes can still have native-architecture-specific
+        # dependency edges. The lock coordinate keeps those graphs separate.
+        content_groups.setdefault((package_coordinate(key)[2], identity), []).append(key)
+    fresh_aliases, new_closures = {}, {}
+
+    def new_closure(key):
+        if key not in new_closures:
+            seen, pending = set(), [key]
+            while pending:
+                item = pending.pop()
+                if item not in seen:
+                    if item not in packages:
+                        raise ValueError("APT dependency is missing from lock: " + item)
+                    seen.add(item)
+                    pending.extend(packages[item]["depends_on"])
+            new_closures[key] = seen
+        return new_closures[key]
+
+    for (native_architecture, identity), keys in content_groups.items():
+        if len(keys) < 2 or any(package_coordinate(old_key)[2] == native_architecture and all(old[field] == identity[index] for index, field in enumerate(("name", "architecture", "version", "sha256"))) for old_key, old in old_packages.items()):
+            continue
+        authorities = [key for key in keys if all(
+            key == other or set(packages[key]["depends_on"]) > set(packages[other]["depends_on"])
+            for other in keys)]
+        if len(authorities) == 1:
+            authority = authorities[0]
+            for key in keys:
+                if key != authority:
+                    fresh_aliases[key] = authority
+
+    for key in packages.keys() & old_packages.keys():
+        if any(packages[key][field] != old_packages[key][field] for field in IDENTITY_FIELDS):
+            raise ValueError("locked package identity changed: " + key)
+
+    def old_closure(key):
+        if key not in closures:
+            closure, pending = set(), [key]
+            while pending:
+                item = pending.pop()
+                if item not in closure:
+                    closure.add(item)
+                    pending.extend(old_packages[item]["depends_on"])
+            closures[key] = closure
+        return closures[key]
+
+    def same_sources(key):
+        return all(result["sources"].get(old_packages[item]["suite"]) == previous["sources"].get(old_packages[item]["suite"])
+                   for item in old_closure(key))
+
+    def restore(key, allowed):
+        closure = old_closure(key)
+        if any(old_packages[item]["suite"] not in allowed for item in closure):
+            raise ValueError("locked alias authority dependency leaves requested sources: " + key)
+        authoritative.update(closure)
+
+    def visit(key, allowed, seen):
+        if key in seen:
+            return aliases.get(key, key)
+        seen.add(key)
+        record = packages[key]
+        if key in fresh_aliases:
+            authority = fresh_aliases[key]
+            if any(packages[item]["suite"] not in allowed for item in new_closure(key) | new_closure(authority)):
+                raise ValueError("new alias authority dependency leaves requested sources: " + key)
+            aliases[key] = authority
+            visit(authority, allowed, seen)
+            return authority
+        if key in old_packages:
+            existing.add(key)
+        else:
+            matches = [old_key for old_key, old in old_packages.items()
+                       if old["suite"] in allowed
+                       and package_coordinate(old_key)[2] == package_coordinate(key)[2]
+                       and all(old[field] == record[field] for field in ("name", "architecture", "version", "sha256"))
+                       and same_sources(old_key)]
+            if matches and record["suite"] not in allowed:
+                raise ValueError("new alias leaves requested sources: " + key)
+            if len(matches) > 1:
+                raise ValueError("ambiguous locked alias authority: " + key)
+            # Different versions/digests and explicitly changed sources are
+            # not aliases. The original authorization/conflict checks decide.
+            if matches:
+                authority = matches[0]
+                restore(authority, allowed)
+                if key in aliases and aliases[key] != authority:
+                    raise ValueError("conflicting locked alias authorities: " + key)
+                aliases[key] = authority
+                return authority
+            additions.add(key)
+        for dependency in record["depends_on"]:
+            visit(dependency, allowed, seen)
+        return key
+
+    for group, definition in result["dependency_sets"].items():
+        old_sets = previous["dependency_sets"].get(group, {}).get("sets", {})
+        allowed = set(requests["dependency_sets"][group].get("suites") or result["sources"])
+        seen = walks.setdefault(tuple(sorted(allowed)), set())
+        for architecture, roots in definition["sets"].items():
+            old_roots = old_sets.get(architecture, {})
+            for root, version in list(roots.items()):
+                key = root + "=" + version
+                replacement = visit(key, allowed, seen)
+                if replacement != key and old_roots.get(root) != version:
+                    del roots[root]
+                    new_root, new_version = replacement.rsplit("=", 1)
+                    roots[new_root] = new_version
+    for key in additions:
+        packages[key]["depends_on"] = [aliases.get(item, item) for item in packages[key]["depends_on"]]
+    for key in existing:
+        dependencies = packages[key]["depends_on"]
+        mapped = [aliases.get(item, item) for item in dependencies]
+        # Repeated exports may reintroduce an unknown origin under an existing
+        # root. Preserve its old dictionary only after proving graph equality;
+        # do not edit a reviewed edge or hide a genuine dependency change.
+        if mapped != dependencies and set(mapped) == set(old_packages[key]["depends_on"]) and same_sources(key):
+            authoritative.add(key)
+    for key in authoritative:
+        packages[key] = deepcopy(old_packages[key])
+    validate_lock(result)
+    return result
 
 
 def merge_locks(documents):
@@ -236,6 +390,7 @@ def check_lock(document, sources, requests, resolver_version=RESOLVER_VERSION):
 def finalize_result(candidate, previous, sources, requests, resolver_version,
                     allow_source_change=False, allow_version_change=False):
     """Validate a complete resolver result before replacing the production file."""
+    candidate = reuse_locked_aliases(candidate, previous, requests)
     validate_lock(candidate)
     expected_sources = source_records(sources)
     if candidate["sources"] != expected_sources:
@@ -436,7 +591,7 @@ def resolve_partition(sources, requests, previous, args):
         info += ["execution_root"]
         execution_root = subprocess.run(info, cwd=workspace, check=True, text=True, capture_output=True).stdout.strip()
         exported = Path(execution_root) / relative
-    return read_json(exported)
+    return reuse_locked_aliases(read_json(exported), previous, requests)
 
 
 def main():
