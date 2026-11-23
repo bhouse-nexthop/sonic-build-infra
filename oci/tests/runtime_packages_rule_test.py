@@ -10,6 +10,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tarfile
 import tempfile
@@ -280,6 +281,127 @@ class RuntimePackagesRuleTest(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("dpkg-gensymbols", result.stderr)
                     self.assertFalse((root / "metadata.json").exists())
+
+    def test_original_plugin_symbols_exclusion_keeps_strict_abi_and_needed_checks(self):
+        """Krb's -X applies to public symbols, not its installed plugin's NEEDED."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with tarfile.open(library) as archive:
+                member = next(item for item in archive if item.isfile() and item.name.endswith(".so.1"))
+                data = archive.extractfile(member).read()
+            plugin = root / "plugin.so"
+            plugin.write_bytes(data)
+            subprocess.run([str(patchelf.absolute()), "--set-soname", "metadata-plugin.so.0", str(plugin)], check=True)
+            original = {"usr/lib/libmetadata-fixture.so.1": data,
+                        "usr/lib/krb5/plugins/preauth/plugin.so": plugin.read_bytes()}
+            payload = root / "plugin.tar"
+            with tarfile.open(payload, "w") as archive:
+                for path, contents in original.items():
+                    item = tarfile.TarInfo(path)
+                    item.size, item.mode = len(contents), 0o755
+                    archive.addfile(item, io.BytesIO(contents))
+            template = root / "symbols"
+            # The independent fixture C source defines exactly metadata_value.
+            template.write_text("libmetadata-fixture.so.1 metadata-library #MINVER#\n metadata_value@Base 2.0\n")
+            common = ["--symbols", "metadata-library=" + str(template), "--symbols-check-level", "4"]
+            excludes = ["--symbols-excludes", json.dumps({"metadata-library": ["krb5/plugins"]})]
+            apt = ["--apt-package", str(libc_data.resolve()) + "=" + str(libc_control.resolve())]
+            for name, extra, error in [("unfiltered", common + apt, "new libraries"),
+                                       ("missing-needed", common + excludes, r"(?:cannot|couldn't) find library libc\.so\.6"),
+                                       ("preserved", common + excludes + apt, None)]:
+                stage = root / name
+                stage.mkdir()
+                result = self.generate(stage, control.resolve(), payload, additional=extra)
+                if error:
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertRegex(result.stderr, error)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    info = json.loads((stage / "metadata.json").read_text())["packages"]["metadata-library"]
+                    self.assertIn("libc6 (>=", info["control_fields"]["Depends"])
+                    inventory = info["elf_inventory"]["usr/lib/krb5/plugins/preauth/plugin.so"]
+                    self.assertEqual(inventory["role"], "runtime")
+                    self.assertFalse(inventory["symbols"])
+                    self.assertTrue(inventory["shlibdeps"])
+                    symbols = (stage / "packages/packages/metadata-library/DEBIAN/symbols").read_text()
+                    self.assertNotIn("metadata-plugin", symbols)
+                    for path, contents in original.items():
+                        self.assertEqual((stage / "packages/packages/metadata-library" / path).read_bytes(), contents)
+
+            removed = root / "removed-library.tar"
+            with tarfile.open(removed, "w") as archive:
+                data = original["usr/lib/krb5/plugins/preauth/plugin.so"]
+                item = tarfile.TarInfo("usr/lib/krb5/plugins/preauth/plugin.so")
+                item.size, item.mode = len(data), 0o755
+                archive.addfile(item, io.BytesIO(data))
+            missing = root / "missing-public-library"
+            missing.mkdir()
+            result = self.generate(missing, control.resolve(), removed, additional=common + excludes + apt)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("libraries disappeared", result.stderr)
+
+    def test_explicit_source_role_preserves_cross_target_objects_and_fixtures(self):
+        """Original Go source selection is data even for an arch-specific source recipe."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_control = self.control(root, "metadata-source", "Depends: base-files", architecture="any")
+            header = bytearray(64)
+            header[:6] = b"\x7fELF\x02\x01"
+            struct.pack_into("<HH", header, 16, 1, 183 if architecture == "amd64" else 62)
+            obj = bytes(header)
+            struct.pack_into("<H", header, 16, 3)
+            original = {"usr/share/example/src/race.syso": obj,
+                        "usr/share/example/src/testdata/foreign.so": bytes(header)}
+            with tarfile.open(library) as archive:
+                member = next(item for item in archive if item.isfile() and item.name.endswith(".so.1"))
+                original["usr/share/example/src/testdata/libmetadata-fixture.so.1"] = archive.extractfile(member).read()
+            payload = root / "source.tar"
+            with tarfile.open(payload, "w") as archive:
+                for path, data in original.items():
+                    item = tarfile.TarInfo(path)
+                    item.size, item.mode = len(data), 0o644
+                    archive.addfile(item, io.BytesIO(data))
+            extra = ["--package-roles", json.dumps({"metadata-source": "source"}),
+                     "--symbols-excludes", json.dumps({"metadata-source": ["testdata", "test"]}),
+                     "--shlibdeps-excludes", json.dumps({"metadata-source": ["testdata", "test"]})]
+            stage = root / "source"
+            stage.mkdir()
+            result = self.generate(stage, source_control, payload, package="metadata-source", additional=extra)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            info = json.loads((stage / "metadata.json").read_text())["packages"]["metadata-source"]
+            self.assertEqual(info["control_fields"]["Architecture"], architecture)
+            self.assertEqual(info["control_fields"]["Depends"], "base-files")
+            self.assertEqual(info["payload_sha256"], hashlib.sha256(payload.read_bytes()).hexdigest())
+            for path, data in original.items():
+                self.assertEqual((stage / "packages/packages/metadata-source" / path).read_bytes(), data)
+                self.assertEqual(info["elf_inventory"][path]["sha256"], hashlib.sha256(data).hexdigest())
+            strict = root / "default-runtime"
+            strict.mkdir()
+            result = self.generate(strict, source_control, payload, package="metadata-source")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("target architecture", result.stderr)
+            # A source fixture with the correct SONAME and architecture still
+            # cannot satisfy a real target executable's dependency.
+            consumer = root / "consumer"
+            consumer.mkdir()
+            result = self.generate(consumer, control.resolve(), program, package="metadata-cli", additional=[
+                "--dependency", str(stage / "packages"),
+                "--apt-package", str(libc_data.resolve()) + "=" + str(libc_control.resolve()),
+            ])
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertRegex(result.stderr, r"(?:cannot|couldn't) find library libmetadata-fixture\.so\.1")
+
+    def test_elf_selection_rejects_unmapped_packages_and_invalid_roles(self):
+        cases = [("--symbols-excludes", {"other": ["plugins"]}),
+                 ("--shlibdeps-excludes", {"metadata-library": [""]}),
+                 ("--package-roles", {"other": "source"}),
+                 ("--package-roles", {"metadata-library": "ignored"})]
+        for flag, mapping in cases:
+            with self.subTest(flag=flag, mapping=mapping), tempfile.TemporaryDirectory() as temporary:
+                result = self.generate(Path(temporary), control.resolve(), library,
+                                       additional=[flag, json.dumps(mapping)])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid per-package ELF", result.stderr)
 
     def test_resource_heavy_payload_does_not_expand_target_search_environment(self):
         """Data directories need no per-directory ELF authorization to dpkg."""

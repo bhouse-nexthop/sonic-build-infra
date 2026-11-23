@@ -88,6 +88,26 @@ The action stages declared TARs with the BSD tar toolchain, generates source
 library symbols using `dpkg-gensymbols`, resolves `${shlibs:Depends}` using
 `dpkg-shlibdeps`, and writes final controls with `dpkg-gencontrol`. Existing
 `symbols` and `substvars` files may be supplied by their producing targets.
+The per-package `symbols_excludes` and `shlibdeps_excludes` maps preserve original
+`dh_makeshlibs -X` and `dh_shlibdeps -X` choices independently. Each term is a
+literal substring of the installed relative path, including directory names;
+regex/glob characters are literal. Symbol exclusions do not relax runtime
+architecture or NEEDED dependency checks. For example, the original Kerberos
+recipe uses `symbols_excludes = {"libkrb5-3": ["krb5/plugins"]}` with
+`symbols_check_level = 4`; its plugin remains installed and dependency-checked.
+
+Explicit source-only payloads use `package_roles = {"example-src": "source"}`.
+Their ET_REL linker inputs are source objects; ELF fixtures excluded by **both**
+original helper selections are source data. All ELF headers are inventoried with
+type, machine, SHA256, role and both selections in `elf_inventory`; bytes and the
+input TAR are unchanged. The role is independent of Debian's Architecture field.
+An ELF outside that source-data selection fails rather than silently becoming a
+runtime library. Source trees stay in the transitive analysis provider, with
+recorded data hashes verified, but never enter target-library or RPATH search.
+Default `runtime` payloads retain strict target-architecture checks, including
+ET_REL objects. A runtime plugin excluded from symbols still participates in
+NEEDED analysis. Defaults do not exclude files.
+
 Additional Debian helper inputs, such as package templates, use `debian_files`
 with paths relative to `debian/`. Standard Python, Perl, debconf and library
 helper substitutions are generated from private copies of the staged files.

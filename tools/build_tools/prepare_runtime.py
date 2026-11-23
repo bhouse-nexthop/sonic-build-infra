@@ -835,7 +835,7 @@ def main() -> None:
     parser.add_argument("--architecture", choices=("amd64", "arm64"), required=True)
     parser.add_argument("--launcher", required=True, type=Path)
     parser.add_argument("--tar", action="append", default=[])
-    parser.add_argument("--profile", choices=("documentation", "configure", "kerberos", "foreign", "image", "manuals", "tcl", "gdb", "tests", "perl", "docbook"), default="documentation")
+    parser.add_argument("--profile", choices=("documentation", "configure", "kerberos", "foreign", "image", "manuals", "tcl", "gdb", "tests", "perl", "docbook", "python_build"), default="documentation")
     args = parser.parse_args()
     validate_launcher(args.launcher, args.architecture)
     root = Path(args.out).resolve()
@@ -850,18 +850,22 @@ def main() -> None:
             wrappers.unlink()
         wrappers.mkdir(exist_ok=True)
 
-    if args.profile in ("configure", "foreign", "manuals", "image", "tests", "perl", "docbook"):
+    if args.profile in ("configure", "foreign", "manuals", "image", "tests", "perl", "docbook", "python_build"):
         # Bazel caches files inside tree outputs. Materialize directory aliases
         # (notably Perl's 5.40 -> 5.40.1) so cache restoration never has to create
         # a child through a directory symlink before its target is populated.
         # X11's recursive compatibility alias is unused by these tools.
-        if args.profile in ("foreign", "image"):
+        if args.profile in ("foreign", "image", "python_build"):
             for path in (root / "usr/bin/X11", root / "bin/X11"):
                 if path.is_symlink() and path.resolve() == path.parent:
                     path.unlink()
         materialize_directory_aliases(root)
     loader = loader_path(root, args.architecture)
     libraries = library_directories(root)
+    if args.profile == "python_build":
+        from python_build_runtime import prepare_python_build
+        prepare_python_build(root, args.architecture, loader, libraries, args.launcher)
+        return
     if args.profile == "gdb":
         prepare_gdb(root, args.architecture, loader, libraries, args.launcher)
         return

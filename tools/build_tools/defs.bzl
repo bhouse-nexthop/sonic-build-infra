@@ -38,6 +38,8 @@ def _runtime_impl(ctx):
     args.add("--launcher", launcher.path)
     args.add_all(ctx.files.packages, before_each = "--tar")
     support = ctx.files._test_support if ctx.attr.profile == "tests" else ([ctx.file._prepare] + ctx.files._elf_support if ctx.attr.profile == "elf" else [])
+    if ctx.attr.profile == "python_build":
+        support = ctx.files._python_build_support
     environment = {"LANG": "C", "LC_ALL": "C", "PYTHONHASHSEED": "0"}
     if support:
         environment["PYTHONPATH"] = ":".join(depset([file.dirname for file in support]).to_list())
@@ -61,7 +63,8 @@ build_tools_runtime = rule(
     attrs = {
         "architecture": attr.string(mandatory = True, values = ["amd64", "arm64"]),
         "packages": attr.label_list(allow_files = True, mandatory = True),
-        "profile": attr.string(default = "documentation", values = ["documentation", "configure", "kerberos", "foreign", "image", "manuals", "tcl", "gdb", "tests", "perl", "docbook", "elf"]),
+        "profile": attr.string(default = "documentation", values = ["documentation", "configure", "kerberos", "foreign", "image", "manuals", "tcl", "gdb", "tests", "perl", "docbook", "elf", "python_build"]),
+        "_python_build_support": attr.label_list(default = [Label(":python_build_runtime.py")], allow_files = True, cfg = "exec"),
         "elf_tools": attr.string_dict(doc = "Explicit executable name to package-relative ELF path; only for profile elf."),
         "runtime_launcher": attr.label(allow_single_file = True, doc = "Optional target-built launcher consumed as output-runtime data, including cross-generated runtimes."),
         "_prepare": attr.label(default = Label(":prepare_runtime.py"), allow_single_file = True, cfg = "exec"),

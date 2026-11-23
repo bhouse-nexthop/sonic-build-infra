@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 from runtime_packages import (
-    DebianTools, check_substitutions, dependency_records, elf_files, merge,
+    DebianTools, check_substitutions, dependency_records, elf_files, elf_inventory, merge,
     read_substvars, sha, source_definition, tool_environment,
     unique_dependencies, validate_archive, validate_required_paths,
 )
@@ -129,6 +129,61 @@ class RuntimePackagesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "target architecture"):
             elf_files(payload, "amd64")
 
+    def test_original_literal_exclusions_do_not_relax_runtime_architecture(self):
+        """Debhelper -X quotes metacharacters; a plugin is still target code."""
+        path = self.root / "plugins" / "lib[1].so"
+        path.parent.mkdir()
+        header = bytearray(64)
+        header[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<HH", header, 16, 3, 62)
+        path.write_bytes(header)
+        excluded = elf_inventory(self.root, "amd64", symbols_excludes=["lib[1]"])
+        self.assertFalse(excluded["plugins/lib[1].so"]["symbols"])
+        self.assertTrue(excluded["plugins/lib[1].so"]["shlibdeps"])
+        literal = elf_inventory(self.root, "amd64", symbols_excludes=["lib.*"])
+        self.assertTrue(literal["plugins/lib[1].so"]["symbols"])
+        with self.assertRaisesRegex(ValueError, "target architecture"):
+            elf_inventory(self.root, "arm64", symbols_excludes=["plugins"])
+
+    def test_source_objects_and_original_excluded_fixtures_are_audited_data(self):
+        """Go ships foreign ET_REL inputs and deliberately cross-target fixtures."""
+        header = bytearray(64)
+        header[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<HH", header, 16, 1, 183)
+        obj = self.root / "race.syso"
+        obj.write_bytes(header)
+        with self.assertRaisesRegex(ValueError, "target architecture"):
+            elf_files(self.root, "amd64")
+        struct.pack_into("<HH", header, 16, 3, 183)
+        fixture = self.root / "testdata" / "foreign.so"
+        fixture.parent.mkdir()
+        fixture.write_bytes(header)
+        data = elf_inventory(self.root, "amd64", role="source",
+                             symbols_excludes=["testdata"], shlibdeps_excludes=["testdata"])
+        self.assertEqual(data["race.syso"]["role"], "source_object")
+        self.assertEqual(data["testdata/foreign.so"]["role"], "source_fixture")
+        for relative, item in data.items():
+            self.assertEqual(item["sha256"], sha(self.root / relative))
+            self.assertEqual(item["machine"], 183)
+            self.assertFalse(item["symbols"])
+            self.assertFalse(item["shlibdeps"])
+        with self.assertRaisesRegex(ValueError, "target architecture"):
+            elf_inventory(self.root, "amd64", role="source", symbols_excludes=["testdata"])
+        struct.pack_into("<HH", header, 16, 3, 62)
+        fixture.write_bytes(header)
+        with self.assertRaisesRegex(ValueError, "outside its declared data selection"):
+            elf_inventory(self.root, "amd64", role="source")
+
+    def test_runtime_relocatable_objects_keep_their_target_architecture_check(self):
+        """ET_REL in an ordinary development/runtime payload still targets its platform."""
+        header = bytearray(64)
+        header[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<HH", header, 16, 1, 62)
+        (self.root / "library.o").write_bytes(header)
+        self.assertEqual(elf_files(self.root, "amd64"), [])
+        with self.assertRaisesRegex(ValueError, "target architecture"):
+            elf_files(self.root, "arm64")
+
     def test_source_dependency_wins_over_old_apt_package_but_conflicts_fail(self):
         """The source-built replacement supplies symbols; incompatible source copies fail."""
         apt = {"name": "libexample", "kind": "apt", "payload_sha256": "old",
@@ -155,6 +210,23 @@ class RuntimePackagesTest(unittest.TestCase):
         self.assertEqual(dependency_records([tree], "amd64")[0]["name"], "libexample")
         control.write_text(control.read_text().replace("2.0", "3.0"))
         with self.assertRaisesRegex(ValueError, "changed after generation"):
+            dependency_records([tree], "amd64")
+
+    def test_source_data_dependency_keeps_role_and_rejects_changed_fixture(self):
+        tree = self.root / "dependency"
+        root = tree / "packages/example-src"
+        (root / "DEBIAN").mkdir(parents=True)
+        control = root / "DEBIAN/control"
+        control.write_text("Package: example-src\nVersion: 2.0\nArchitecture: all\n")
+        fixture = root / "source.syso"
+        fixture.write_bytes(b"declared source object data")
+        (tree / "manifest.json").write_text(json.dumps({"schema": 1, "architecture": "amd64", "packages": [{
+            "root": "packages/example-src", "kind": "source", "payload_sha256": "a" * 64,
+            "control_sha256": sha(control), "package_role": "source",
+            "elf_inventory": {"source.syso": {"role": "source_object", "sha256": sha(fixture)}}}]}))
+        self.assertEqual(dependency_records([tree], "amd64")[0]["role"], "source")
+        fixture.write_bytes(b"changed source data")
+        with self.assertRaisesRegex(ValueError, "source ELF data changed"):
             dependency_records([tree], "amd64")
 
     def test_tar_path_cannot_escape_before_standard_extraction(self):

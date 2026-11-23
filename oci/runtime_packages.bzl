@@ -37,6 +37,9 @@ def _runtime_packages_impl(ctx):
     args.add("--module", ctx.attr.module_name)
     args.add("--architecture", ctx.attr.architecture)
     args.add("--symbols-check-level", ctx.attr.symbols_check_level)
+    args.add("--symbols-excludes", json.encode(ctx.attr.symbols_excludes))
+    args.add("--shlibdeps-excludes", json.encode(ctx.attr.shlibdeps_excludes))
+    args.add("--package-roles", json.encode(ctx.attr.package_roles))
     args.add("--tools", ctx.file._tools.path)
     args.add("--tar", tar.tarinfo.binary)
     args.add("--output", output)
@@ -91,6 +94,9 @@ def _runtime_packages_impl(ctx):
 _runtime_packages = rule(
     implementation = _runtime_packages_impl,
     attrs = {
+        "symbols_excludes": attr.string_list_dict(doc = "Original dh_makeshlibs -X literal path substrings, per package; runtime ELF checks remain strict."),
+        "shlibdeps_excludes": attr.string_list_dict(doc = "Original dh_shlibdeps -X literal path substrings, per package."),
+        "package_roles": attr.string_dict(doc = "Explicit source-only data packages use source; default runtime keeps target architecture/ABI checks."),
         "symbols_check_level": attr.int(default = 1, values = [0, 1, 2, 3, 4], doc = "Original dpkg-gensymbols check level."),
         "shlibdeps": attr.bool(default = True, doc = "Run original dh_shlibdeps dependency calculation; explicitly disable only for an empty source override."),
         "control": attr.label(allow_single_file = True, mandatory = True),
@@ -127,6 +133,12 @@ def runtime_packages(name, packages, control, changelog = None, apt_packages = {
     required_paths optionally maps package names to reviewed runtime TAR paths.
     Each listed path must exist before metadata is published; {multiarch} expands
     for the target architecture. Images may add their own integration checks.
+    symbols_excludes/shlibdeps_excludes retain the original per-package -X
+    literal substring selections independently. Neither relaxes runtime ELF checks.
+    package_roles explicitly marks source-only payloads as source: ET_REL and
+    files excluded by both helpers are audited data, never target libraries.
+    Every other ELF must retain its target runtime role or fails explicitly.
+    Source role is independent of the Debian Architecture field.
     dependencies supplies source-built library metadata in target configuration.
     shlibdeps=False is an explicit source recipe override for an empty
     dh_shlibdeps target. It preserves ELF-needed evidence and skips only the

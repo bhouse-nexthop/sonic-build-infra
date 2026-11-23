@@ -285,6 +285,246 @@ class LockContractTest(unittest.TestCase):
         lock.check_lock(result, sources, requests, "fixture-resolver")
 
 
+class LockedAliasContractTest(unittest.TestCase):
+    # Distroless's real Tk/BLT export has virtual and concrete references to
+    # freetype with equal version/DEB SHA but different source names. The old
+    # record, including its nonempty dependency graph, is the authority.
+    def fixture(self):
+        previous = graph()
+        previous["sources"]["security"] = deepcopy(previous["sources"]["stable"])
+        authority = "/stable/helper:amd64=2"
+        previous["packages"][authority]["depends_on"] = ["/stable/leaf:amd64=1"]
+        previous["packages"]["/stable/leaf:amd64=1"] = package("leaf")
+        candidate = deepcopy(previous)
+        alias = "/security/helper:amd64=2"
+        candidate["packages"][alias] = dict(package("helper", "2"), suite="security")
+        new = "/stable/tk:amd64=1"
+        candidate["packages"][new] = package("tk", dependencies=[alias, authority])
+        candidate["dependency_sets"]["runtime"]["sets"]["amd64"]["/stable/tk:amd64"] = "1"
+        requests = request_document(["demo", "tk"])
+        requests["dependency_sets"]["runtime"]["suites"] = ["stable", "security"]
+        return candidate, previous, requests, alias, authority, new
+
+    def test_new_root_reuses_complete_authority_and_is_idempotent(self):
+        candidate, previous, requests, alias, authority, new = self.fixture()
+        before = deepcopy(previous)
+        # Simulate the export's incomplete record for the already locked DEB.
+        candidate["packages"][authority]["depends_on"] = []
+        result = lock.reuse_locked_aliases(candidate, previous, requests)
+        self.assertEqual(result["packages"][new]["depends_on"], [authority, authority])
+        for key, record in previous["packages"].items():
+            self.assertEqual(result["packages"][key], record)
+        self.assertEqual(result["dependency_sets"]["runtime"]["sets"]["amd64"]["/stable/demo:amd64"], "1")
+        self.assertEqual(previous, before)
+        self.assertEqual(lock.reuse_locked_aliases(result, previous, requests), result)
+        lock.validate_lock(result)
+
+    def test_sha_and_version_conflicts_are_rejected(self):
+        for field, value in [("sha256", "b" * 64), ("version", "3")]:
+            candidate, previous, requests, alias, _, new = self.fixture()
+            candidate["packages"][alias][field] = value
+            if field == "version":
+                replacement = alias.rsplit("=", 1)[0] + "=3"
+                candidate["packages"][replacement] = candidate["packages"].pop(alias)
+                candidate["packages"][new]["depends_on"][0] = replacement
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                lock.reuse_locked_aliases(candidate, previous, requests)
+
+    def test_raw_export_repeated_after_new_root_is_locked_preserves_old_dictionary(self):
+        raw, previous, requests, alias, authority, new = self.fixture()
+        first = lock.reuse_locked_aliases(raw, previous, requests)
+        del first["packages"][alias]  # The finalizer drops this unreachable alias.
+        raw_again = deepcopy(raw)
+        before = deepcopy(first)
+        repeated = lock.reuse_locked_aliases(raw_again, first, requests)
+        for key, record in first["packages"].items():
+            self.assertEqual(repeated["packages"][key], record)
+        self.assertEqual(repeated["dependency_sets"], first["dependency_sets"])
+        self.assertEqual(first, before)
+        self.assertEqual(raw_again, raw)
+
+    def test_authorized_source_update_with_new_independent_root_keeps_cli_contract(self):
+        previous = graph()
+        candidate = deepcopy(previous)
+        sources = source_document("https://new-snapshot.example/debian/20260801")
+        candidate["sources"] = lock.source_records(sources)
+        added = "/stable/added:amd64=1"
+        candidate["packages"][added] = package("added")
+        candidate["dependency_sets"]["runtime"]["sets"]["amd64"]["/stable/added:amd64"] = "1"
+        requests = request_document(["demo", "added"])
+        with self.assertRaisesRegex(ValueError, "allow-source-change"):
+            lock.finalize_result(candidate, previous, sources, requests, "fixture")
+        result = lock.finalize_result(candidate, previous, sources, requests, "fixture", allow_source_change=True)
+        self.assertIn(added, result["packages"])
+
+    def test_authorized_version_update_with_new_root_keeps_cli_contract(self):
+        previous = graph()
+        candidate = deepcopy(previous)
+        changed = "/stable/helper:amd64=3"
+        candidate["packages"][changed] = package("helper", "3")
+        candidate["packages"]["/stable/demo:amd64=1"]["depends_on"] = [changed]
+        added = "/stable/added:amd64=1"
+        candidate["packages"][added] = package("added", dependencies=[changed])
+        candidate["dependency_sets"]["runtime"]["sets"]["amd64"]["/stable/added:amd64"] = "1"
+        requests = request_document(["demo", "added"])
+        with self.assertRaisesRegex(ValueError, "version changed"):
+            lock.finalize_result(candidate, previous, source_document(), requests, "fixture")
+        result = lock.finalize_result(candidate, previous, source_document(), requests, "fixture", allow_version_change=True)
+        self.assertIn(changed, result["packages"])
+
+    def test_source_update_does_not_reuse_old_source_alias_authority(self):
+        candidate, previous, requests, alias, authority, new = self.fixture()
+        # Independent collections may deliberately use different origins.
+        candidate["dependency_sets"]["runtime"]["sets"]["amd64"].pop("/stable/tk:amd64")
+        candidate["dependency_sets"]["newtools"] = {"sets": {"amd64": {"/stable/tk:amd64": "1"}}}
+        requests["dependency_sets"]["newtools"] = deepcopy(requests["dependency_sets"]["runtime"])
+        candidate["packages"][new]["depends_on"] = [alias]
+        candidate["sources"]["stable"]["uris"] = ["https://new-snapshot.example/debian/20260801"]
+        result = lock.reuse_locked_aliases(candidate, previous, requests)
+        self.assertEqual(result["packages"][new]["depends_on"], [alias])
+
+    def test_requested_sources_and_authority_closure_are_enforced(self):
+        candidate, previous, requests, _, _, _ = self.fixture()
+        requests["dependency_sets"]["runtime"]["suites"] = ["stable"]
+        with self.assertRaisesRegex(ValueError, "requested sources"):
+            lock.reuse_locked_aliases(candidate, previous, requests)
+        candidate, previous, requests, _, authority, _ = self.fixture()
+        for document in [candidate, previous]:
+            document["sources"]["bookworm"] = deepcopy(document["sources"]["stable"])
+            document["packages"]["/bookworm/leaf:amd64=1"] = dict(package("leaf"), suite="bookworm")
+            document["packages"][authority]["depends_on"] = ["/bookworm/leaf:amd64=1"]
+        with self.assertRaisesRegex(ValueError, "requested sources"):
+            lock.reuse_locked_aliases(candidate, previous, requests)
+
+    def test_ambiguous_authority_and_unchanged_root_are_rejected(self):
+        candidate, previous, requests, alias, authority, new = self.fixture()
+        previous["packages"][alias] = deepcopy(candidate["packages"][alias])
+        # Two same-content old authorities are not a basis for choosing one.
+        other = "/stable-extra/helper:amd64=2"
+        for document in [candidate, previous]:
+            document["sources"]["stable-extra"] = deepcopy(document["sources"]["stable"])
+            document["packages"][other] = dict(package("helper", "2"), suite="stable-extra")
+        candidate["sources"]["third"] = deepcopy(candidate["sources"]["stable"])
+        fresh = "/third/helper:amd64=2"
+        candidate["packages"][fresh] = dict(package("helper", "2"), suite="third")
+        candidate["packages"][new]["depends_on"][0] = fresh
+        requests["dependency_sets"]["runtime"]["suites"] += ["stable-extra", "third"]
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            lock.reuse_locked_aliases(candidate, previous, requests)
+        candidate, previous, requests, alias, _, new = self.fixture()
+        del candidate["dependency_sets"]["runtime"]["sets"]["amd64"]["/stable/tk:amd64"]
+        extra = "/stable/extra:amd64=1"
+        candidate["packages"][extra] = package("extra")
+        candidate["packages"]["/stable/demo:amd64=1"]["depends_on"] += [alias, extra]
+        with self.assertRaisesRegex(ValueError, "two versions or origins"):
+            lock.reuse_locked_aliases(candidate, previous, requests)
+
+
+
+class NewProviderAliasContractTest(unittest.TestCase):
+    # Independent expectations come from the fixed DEB control, which has
+    # Provides: libfreetype6-dev and six Depends groups. The original export
+    # excerpt retains both real AMD64/ARM64 package identities and graph edges.
+    def fixture(self):
+        candidate = json.loads((Path(__file__).parent / "testdata/new-provider-alias-export.json").read_text())
+        previous = dict(version=2, sources=deepcopy(candidate["sources"]), packages={}, dependency_sets={}, facts={})
+        requests = {"dependency_sets": {"python_targets": {"suites": ["trixie", "trixie-security"]}}}
+        return candidate, previous, requests
+
+    def names(self, architecture):
+        stem = "libfreetype-dev:" + architecture + "=2.13.3+dfsg-1+deb13u1"
+        return "/trixie/" + stem, "/trixie-security/" + stem
+
+    def test_original_export_preserves_six_real_dependency_groups_both_architectures(self):
+        candidate, previous, requests = self.fixture()
+        before = deepcopy(previous)
+        result = lock.reuse_locked_aliases(candidate, previous, requests)
+        for arch in ("amd64", "arm64"):
+            alias, authority = self.names(arch)
+            roots = result["dependency_sets"]["python_targets"]["sets"][arch]
+            self.assertNotIn(alias.rsplit("=", 1)[0], roots)
+            self.assertIn(authority.rsplit("=", 1)[0], roots)
+            self.assertEqual(result["packages"][authority], candidate["packages"][authority])
+            names = {result["packages"][key]["name"] for key in result["packages"][authority]["depends_on"]}
+            for alternatives in [{"libfreetype6"}, {"libbrotli-dev"}, {"libbz2-dev"}, {"libc6-dev", "libc-dev"}, {"libpng-dev"}, {"zlib1g-dev", "libz-dev"}]:
+                self.assertTrue(names & alternatives)
+        self.assertEqual(previous, before)
+        self.assertEqual(lock.reuse_locked_aliases(result, previous, requests), result)
+
+    def test_partial_nonempty_alias_uses_same_strict_graph_contract(self):
+        candidate, previous, requests = self.fixture()
+        for arch in ("amd64", "arm64"):
+            alias, authority = self.names(arch)
+            candidate["packages"][alias]["depends_on"] = candidate["packages"][authority]["depends_on"][:1]
+        result = lock.reuse_locked_aliases(candidate, previous, requests)
+        self.assertEqual(len(result["dependency_sets"]["python_targets"]["sets"]["arm64"]), 1)
+
+    def test_equal_or_incomparable_graphs_do_not_choose_an_origin(self):
+        for kind in ("equal", "incomparable"):
+            candidate, previous, requests = self.fixture()
+            alias, authority = self.names("arm64")
+            if kind == "equal":
+                candidate["packages"][alias]["depends_on"] = candidate["packages"][authority]["depends_on"][:]
+            else:
+                candidate["packages"][alias]["depends_on"] = [self.names("amd64")[1]]
+            with self.assertRaisesRegex(ValueError, "two versions or origins"):
+                lock.reuse_locked_aliases(candidate, previous, requests)
+
+    def test_different_binary_or_extraction_identity_remains_a_conflict(self):
+        for field, value in [("sha256", "f" * 64), ("size", 1), ("section", "other"), ("files", ["different/file"])]:
+            candidate, previous, requests = self.fixture()
+            alias, _ = self.names("arm64")
+            candidate["packages"][alias][field] = value
+            with self.assertRaisesRegex(ValueError, "two versions or origins"):
+                lock.reuse_locked_aliases(candidate, previous, requests)
+
+    def test_different_version_remains_a_conflict(self):
+        candidate, previous, requests = self.fixture()
+        alias, _ = self.names("arm64")
+        changed = alias.rsplit("=", 1)[0] + "=99"
+        candidate["packages"][changed] = candidate["packages"].pop(alias)
+        candidate["packages"][changed]["version"] = "99"
+        candidate["dependency_sets"]["python_targets"]["sets"]["arm64"][alias.rsplit("=", 1)[0]] = "99"
+        with self.assertRaisesRegex(ValueError, "two versions or origins"):
+            lock.reuse_locked_aliases(candidate, previous, requests)
+
+    def test_new_authority_and_its_closure_must_stay_in_requested_sources(self):
+        candidate, previous, requests = self.fixture()
+        requests["dependency_sets"]["python_targets"]["suites"] = ["trixie"]
+        with self.assertRaisesRegex(ValueError, "requested sources"):
+            lock.reuse_locked_aliases(candidate, previous, requests)
+
+    def test_architecture_all_retains_native_coordinate_and_graph(self):
+        candidate, previous, requests = self.fixture()
+        amd = "/trixie/x11proto-core-dev:amd64=2024.1-1"
+        arm = "/trixie/x11proto-core-dev:arm64=2024.1-1"
+        pending, keys = [amd], set()
+        while pending:
+            key = pending.pop()
+            if key not in keys:
+                keys.add(key)
+                pending.extend(candidate["packages"][key]["depends_on"])
+        previous["packages"] = {key: deepcopy(candidate["packages"][key]) for key in keys}
+        previous["dependency_sets"] = {"python_targets": {"sets": {"amd64": {amd.rsplit("=", 1)[0]: "2024.1-1"}}}}
+        for architecture, key in [("amd64", amd), ("arm64", arm)]:
+            candidate["dependency_sets"]["python_targets"]["sets"][architecture][key.rsplit("=", 1)[0]] = "2024.1-1"
+        before = deepcopy(previous)
+        result = lock.reuse_locked_aliases(candidate, previous, requests)
+        self.assertIn(arm.rsplit("=", 1)[0], result["dependency_sets"]["python_targets"]["sets"]["arm64"])
+        self.assertEqual(result["packages"][arm], candidate["packages"][arm])
+        self.assertTrue(all(":arm64=" in key for key in result["packages"][arm]["depends_on"]))
+        self.assertEqual(previous, before)
+        for key, value in previous["packages"].items():
+            self.assertEqual(result["packages"][key], value)
+
+    def test_dangling_new_authority_is_rejected(self):
+        candidate, previous, requests = self.fixture()
+        _, authority = self.names("arm64")
+        del candidate["packages"][candidate["packages"][authority]["depends_on"][0]]
+        with self.assertRaisesRegex(ValueError, "missing from lock"):
+            lock.reuse_locked_aliases(candidate, previous, requests)
+
+
 class CollectionVersionContractTest(unittest.TestCase):
     def test_single_collection_rejects_conflicting_transitive_version(self):
         document = graph()
